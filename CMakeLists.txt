@@ -54,6 +54,11 @@ option(WHISPER_BUILD_TESTS            "whisper: build tests"    ${WHISPER_STANDA
 option(WHISPER_BUILD_EXAMPLES         "whisper: build examples" ${WHISPER_STANDALONE})
 
 option(WHISPER_SDL2                   "whisper: support for libSDL2" OFF)
+option(WHISPER_portaudio              "whisper: support for portaudio" OFF)
+option(WHISPER_portaudiocpp           "whisper: support for portaudiocpp" OFF)
+option(WHISPER_SampleRate             "whisper: support for libSampleRate" OFF)
+option(WHISPER_sndfile                "whisper: support for libsndfile" OFF)
+
 
 option(WHISPER_NO_AVX                 "whisper: disable AVX"  OFF)
 option(WHISPER_NO_AVX2                "whisper: disable AVX2" OFF)

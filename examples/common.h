@@ -145,6 +145,7 @@ bool read_wav(
         bool stereo);
 
 // Write PCM data into WAV audio file
+/*
 class wav_writer {
 private:
     std::ofstream file;
@@ -240,6 +241,7 @@ public:
         }
     }
 };
+*/
 
 
 // Apply a high-pass frequency filter to PCM audio

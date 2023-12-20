@@ -5008,6 +5008,8 @@ int whisper_full_with_state(
     // clear old results
     auto & result_all = state->result_all;
 
+    std::string *lasttext = new std::string("");
+
     result_all.clear();
 
     if (n_samples > 0) {
@@ -5761,7 +5763,7 @@ int whisper_full_with_state(
                                 if (params.print_timestamps) {
                                     printf("[%s --> %s]  %s\n", to_timestamp(tt0).c_str(), to_timestamp(tt1).c_str(), text.c_str());
                                 } else {
-                                    printf("%s", text.c_str());
+                                    printf("%s\n", text.c_str());
                                     fflush(stdout);
                                 }
                             }
@@ -5787,6 +5789,14 @@ int whisper_full_with_state(
                                 params.new_segment_callback(ctx, state, n_new, params.new_segment_callback_user_data);
                             }
                         }
+
+                        //try avoid repetition by resetting the prompt if last text repeated
+                        if (0 == strncmp(lasttext->c_str(), text.c_str(), text.length())) {
+                            prompt_past.clear();
+                        }
+                        delete lasttext;
+                        lasttext = new std::string(text);
+
                         text = "";
                         while (i < (int) tokens_cur.size() && tokens_cur[i].id > whisper_token_beg(ctx)) {
                             i++;
@@ -5808,7 +5818,7 @@ int whisper_full_with_state(
                         if (params.print_timestamps) {
                             printf("[%s --> %s]  %s\n", to_timestamp(tt0).c_str(), to_timestamp(tt1).c_str(), text.c_str());
                         } else {
-                            printf("%s", text.c_str());
+                            printf("%s\n", text.c_str());
                             fflush(stdout);
                         }
                     }
@@ -5840,6 +5850,9 @@ int whisper_full_with_state(
             WHISPER_PRINT_DEBUG("seek = %d, seek_delta = %d\n", seek, seek_delta);
         }
     }
+
+    if(lasttext)
+        delete lasttext;
 
     return 0;
 }
