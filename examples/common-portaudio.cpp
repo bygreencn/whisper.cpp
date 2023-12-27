@@ -26,13 +26,6 @@ audio_async::audio_async()
 }
 
 audio_async::~audio_async() {
-    m_running = true;
-    if(m_pStreamRecord){
-        m_pStreamRecord->stop();
-        delete m_pStreamRecord;
-        m_pStreamRecord = NULL;
-    }
-    
     if(m_pParamsRecord)
     {
         delete m_pParamsRecord;
@@ -55,7 +48,7 @@ audio_async::~audio_async() {
     }
 }
 
-bool audio_async::init(int iInputDevice, bool save_audio){
+bool audio_async::init(int iInputDevice, uint8_t save_audio){
 
     try
 	{
@@ -66,7 +59,7 @@ bool audio_async::init(int iInputDevice, bool save_audio){
         std::cout << "Number of devices = " << iNumDevices << std::endl;		
         if ((iInputDevice >= 0) && (iInputDevice >= iNumDevices))
         {
-            cout << "Input device index out of range!" << endl;
+            std::cout << "Input device index out of range!" << std::endl;
             return false;
         }
 
@@ -81,16 +74,16 @@ bool audio_async::init(int iInputDevice, bool save_audio){
             if ((*i).isSystemDefaultOutputDevice())
                 strDetails += ", default output";
 
-            cout << (*i).index() << ": " << (*i).name() << ", ";
-            cout << "in=" << (*i).maxInputChannels() << " ";
-            cout << "out=" << (*i).maxOutputChannels() << ", ";
-            cout << (*i).hostApi().name();
+            std::cout << (*i).index() << ": " << (*i).name() << ", ";
+            std::cout << "in=" << (*i).maxInputChannels() << " ";
+            std::cout << "out=" << (*i).maxOutputChannels() << ", ";
+            std::cout << (*i).hostApi().name();
 
-            cout << strDetails.c_str() << endl;
+            std::cout << strDetails.c_str() << std::endl;
         }
 #endif
    
-        m_pAudioBuffer->Save_Audio(save_audio);
+        m_pAudioBuffer->setSaveAudioFlag(save_audio);
 
         cout << "Opening recording input stream on " << m_psys->deviceByIndex(iInputDevice).name() << endl;
         m_pInParamsRecord = new portaudio::DirectionSpecificStreamParameters(
@@ -117,19 +110,19 @@ bool audio_async::init(int iInputDevice, bool save_audio){
     }
 	catch (const portaudio::PaException &e)
 	{
-		cout << "A PortAudio error occured: " << e.paErrorText() << endl;
+        std::cout << "A PortAudio error occured: " << e.paErrorText() << std::endl;
 	}
 	catch (const portaudio::PaCppException &e)
 	{
-		cout << "A PortAudioCpp error occured: " << e.what() << endl;
+        std::cout << "A PortAudioCpp error occured: " << e.what() << std::endl;
 	}
 	catch (const exception &e)
 	{
-		cout << "A generic exception occured: " << e.what() << endl;
+        std::cout << "A generic exception occured: " << e.what() << std::endl;
 	}
 	catch (...)
 	{
-		cout << "An unknown exception occured." << endl;
+        std::cout << "An unknown exception occured." << std::endl;
 	}
 
     return true;
@@ -138,13 +131,13 @@ bool audio_async::init(int iInputDevice, bool save_audio){
 bool audio_async::resume() 
 {
     cout << "resume" << endl;
-    if (!m_pStreamRecord) {
-        fprintf(stderr, "%s: no audio device to resume!\n", __func__);
+    if (NULL == m_pStreamRecord) {
+        std::cout << __func__ << ": no audio device to resume!" << std::endl;
         return false;
     }
 
     if (m_running) {
-        fprintf(stderr, "%s: already running!\n", __func__);
+        std::cout << __func__ << ": already running!" << std::endl;
         return false;
     }
 
@@ -157,13 +150,13 @@ bool audio_async::resume()
 
 bool audio_async::pause() 
 {
-    if (!m_pStreamRecord) {
-        fprintf(stderr, "%s: no audio device to pause!\n", __func__);
+    if (NULL == m_pStreamRecord) {
+        std::cout << __func__ << ": no audio device to pause!" << std::endl;
         return false;
     }
 
     if (!m_running) {
-        fprintf(stderr, "%s: already paused!\n", __func__);
+        std::cout << __func__ << ": already paused!" << std::endl;
         return false;
     }
 
@@ -174,6 +167,16 @@ bool audio_async::pause()
     return true;
 }
 
+void audio_async::close()
+{
+    m_running = true;
+    if (m_pStreamRecord) {
+        m_pStreamRecord->close();
+        delete m_pStreamRecord;
+        m_pStreamRecord = NULL;
+    }
+}
+
 bool audio_async::clear() 
 {
     this->m_pAudioBuffer->clear();
@@ -181,19 +184,25 @@ bool audio_async::clear()
 }
 
 
-void audio_async::get(int fames, std::vector<float> & result) 
+bool audio_async::get(int fames, std::vector<float> & result) 
 {
-    if (!m_pStreamRecord) {
-        fprintf(stderr, "%s: no audio device to get audio from!\n", __func__);
-        return;
+    if (NULL == m_pStreamRecord) {
+        std::cout << __func__ << ": no audio device to get audio from!" << std::endl;
+        return false;
     }
 
     if (!m_running) {
-        fprintf(stderr, "%s: not running!\n", __func__);
-        return;
+        std::cout << __func__ << ": not running!" << std::endl;
+        return false;
     }
     
     size_t osize = (size_t)(fames);
     result.resize(osize);
-    m_pAudioBuffer->dequeue(&result[0],osize);
+    bool status = m_pAudioBuffer->dequeue(&result[0],osize);
+    if (false == status)
+    {
+        result.clear();
+        return false;
+    }
+    return true;
 }

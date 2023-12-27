@@ -5,7 +5,7 @@
 #include "common-portaudio.h"
 #include "common.h"
 #include "whisper.h"
-
+#include <signal.h>
 #include <cassert>
 #include <cstdio>
 #include <string>
@@ -14,7 +14,15 @@
 #include <fstream>
 #include <sndfile.h>
 
-//#define __DEBUG_AUDIO_SPEED__
+
+static volatile bool is_running = true;
+void exit_handler(int signo) {
+    if (signo == SIGINT)
+        printf("received SIGINT, while exit soon\n");
+    signal(signo, SIG_IGN);
+    is_running = false;
+}
+
 
 //  500 -> 00:05.000
 // 6000 -> 01:00.000
@@ -44,17 +52,17 @@ struct whisper_params {
     float freq_thold   = 200.0f;
 
     bool speed_up      = false;
-    bool translate     = true;
+    bool translate     = false;
     bool no_fallback   = true;
     bool print_special = false;
     bool no_context    = true;
     bool no_timestamps = true;
     bool tinydiarize   = false;
-    bool save_audio    = false; // save audio to wav file
+    uint8_t save_audio    = 0; // save audio to wav file
     bool use_gpu       = false;
 
     std::string language  = "zh";
-    std::string model     = "F:\\Src.Disk\\whisper.cpp\\whisper.cpp\\models\\ggml-base-q5_1.bin";
+    std::string model     = "ggml-base-q5_1.bin";
     std::string fname_out;
 };
 
@@ -86,7 +94,7 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-m"    || arg == "--model")         { params.model         = argv[++i]; }
         else if (arg == "-f"    || arg == "--file")          { params.fname_out     = argv[++i]; }
         else if (arg == "-tdrz" || arg == "--tinydiarize")   { params.tinydiarize   = true; }
-        else if (arg == "-sa"   || arg == "--save-audio")    { params.save_audio    = true; }
+        else if (arg == "-sa"   || arg == "--save-audio")    { params.save_audio    = std::stoi(argv[++i]); }
         else if (arg == "-ng"   || arg == "--no-gpu")        { params.use_gpu       = false; }
 
         else {
@@ -123,12 +131,15 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -m FNAME, --model FNAME   [%-7s] model path\n",                                     params.model.c_str());
     fprintf(stderr, "  -f FNAME, --file FNAME    [%-7s] text output file name\n",                          params.fname_out.c_str());
     fprintf(stderr, "  -tdrz,    --tinydiarize   [%-7s] enable tinydiarize (requires a tdrz model)\n",     params.tinydiarize ? "true" : "false");
-    fprintf(stderr, "  -sa,      --save-audio    [%-7s] save the recorded audio to a file\n",              params.save_audio ? "true" : "false");
+    fprintf(stderr, "  -sa,      --save-audio    [%-7x] save the recorded audio to a file\n",              params.save_audio);
     fprintf(stderr, "  -ng,      --no-gpu        [%-7s] disable GPU inference\n",                          params.use_gpu ? "false" : "true");
     fprintf(stderr, "\n");
 }
 
 int main(int argc, char ** argv) {
+
+    signal(SIGINT, exit_handler);
+
     whisper_params params;
     VadIterator silero_vad(L"silero_vad.onnx");
 
@@ -143,6 +154,7 @@ int main(int argc, char ** argv) {
     const int n_samples_len  = (int)((params.length_s)*WHISPER_SAMPLE_RATE);
     const int n_samples_keep = (int)((params.keep_s  )*WHISPER_SAMPLE_RATE);
     const int n_samples_30s  = (int)((30.0           )*WHISPER_SAMPLE_RATE);
+    const int vadleast_n_samples_len = n_samples_len;
 
     const bool use_vad = n_samples_step <= 0; // sliding window mode uses VAD
 
@@ -213,8 +225,6 @@ int main(int argc, char ** argv) {
 
     int n_iter = 0;
 
-    bool is_running = true;
-
     std::ofstream fout;
     if (params.fname_out.length() > 0) {
         fout.open(params.fname_out);
@@ -223,15 +233,7 @@ int main(int argc, char ** argv) {
             return 1;
         }
     }
-#if defined(__DEBUG_AUDIO_SPEED__)
-    wav_writer wavWriter;
-    time_t now = time(0);
-    char buffer[80];
-    strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", localtime(&now));
-    std::string filename = std::string(buffer) + ".wav";
 
-    wavWriter.open(filename, WHISPER_SAMPLE_RATE, 32, 1);
-#endif
     printf("[Start speaking]\n");
     fflush(stdout);
 
@@ -240,14 +242,12 @@ int main(int argc, char ** argv) {
 
     // main audio loop
     while (is_running) {
-        if (!is_running) {
-            break;
-        }
 
         // process new audio
         if (!use_vad) {
-            while (true) {
-                audio.get(n_samples_step, pcmf32_new);
+            while (is_running) {
+                if (false == audio.get(n_samples_step, pcmf32_new))
+                    continue;
                 
                 size_t size_pcmf32_new = pcmf32_new.size();
                 if (size_pcmf32_new > 2*n_samples_step) {
@@ -266,21 +266,16 @@ int main(int argc, char ** argv) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
-            const int n_samples_new = pcmf32_new.size();
+            const int n_samples_new = (int)pcmf32_new.size();
 
             // take up to params.length_ms audio from previous iteration
             const int n_samples_take = std::min((int) pcmf32_old.size(), std::max(0, n_samples_keep + n_samples_len - n_samples_new));
 
             //printf("processing: take = %d, new = %d, old = %d\n", n_samples_take, n_samples_new, (int) pcmf32_old.size());
 
-            pcmf32.resize(n_samples_new + n_samples_take);
-
-            for (int i = 0; i < n_samples_take; i++) {
-                pcmf32[i] = pcmf32_old[pcmf32_old.size() - n_samples_take + i];
-            }
-
-            memcpy(pcmf32.data() + n_samples_take, pcmf32_new.data(), n_samples_new*sizeof(float));
-
+            pcmf32.clear();
+            pcmf32.insert(pcmf32.end(), pcmf32_old.end() - n_samples_take, pcmf32_old.end());
+            pcmf32.insert(pcmf32.end(), pcmf32_new.begin(), pcmf32_new.end());
             pcmf32_old = pcmf32;
         } else {
             //const auto t_now  = std::chrono::high_resolution_clock::now();
@@ -289,28 +284,32 @@ int main(int argc, char ** argv) {
             //    std::this_thread::sleep_for(std::chrono::milliseconds(100));
             //    continue;
             //}
-
-            audio.get(params.length_s*WHISPER_SAMPLE_RATE, pcmf32_new);
-
-            silero_vad.process(pcmf32_new, pcmf32);
+            pcmf32.clear();
             
-
-            /*
-            audio.get(2*WHISPER_SAMPLE_RATE, pcmf32_new);
-            if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, true)) {
-                audio.get(n_samples_len, pcmf32);
-            } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-                continue;
-            }*/
+            while(is_running)
+            {
+                if (false == audio.get((int)(n_samples_len), pcmf32_new))
+                    continue;
+                silero_vad.process(pcmf32_new, pcmf32_old);
+                pcmf32.insert(pcmf32.end(), pcmf32_old.begin(), pcmf32_old.end());
+                if (pcmf32.size() >= vadleast_n_samples_len)
+                    break;
+            }
 
             //t_last = t_now;
         }
+
+        if (!is_running) {
+            break;
+        }
+
         printf("\n***memory usage : %4.3f\n",audio.memory_usage_info());
-#if defined(__DEBUG_AUDIO_SPEED__)
-        wavWriter.write(pcmf32.data(), pcmf32.size());
-#endif
+
+        if (params.save_audio && SAVE_AUDIO_VAD)
+        {
+            audio.write_vad_audio(pcmf32.data(), pcmf32.size());
+        }
+
         // run the inference
         {
             whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -335,14 +334,18 @@ int main(int argc, char ** argv) {
             //wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
 
             wparams.prompt_tokens    = params.no_context ? nullptr : prompt_tokens.data();
-            wparams.prompt_n_tokens  = params.no_context ? 0       : prompt_tokens.size();
+            wparams.prompt_n_tokens  = params.no_context ? 0       : (int)prompt_tokens.size();
 
 
             wparams.n_max_text_ctx = 0;
 
-            if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) {
+            if (whisper_full(ctx, wparams, pcmf32.data(), (int)pcmf32.size()) != 0) {
                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
                 return 6;
+            }
+
+            if (!is_running) {
+                break;
             }
 
             // print result;
@@ -429,11 +432,13 @@ int main(int argc, char ** argv) {
 	
 
     audio.pause();
-#if defined(__DEBUG_AUDIO_SPEED__)
-	wavWriter.close();
-#endif
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    audio.close();
+
     whisper_print_timings(ctx);
     whisper_free(ctx);
+
+    
 
     return 0;
 }

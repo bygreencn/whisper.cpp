@@ -7,6 +7,14 @@
 #include "onnxruntime_cxx_api.h"
 #include <iostream>
 #include <string>
+
+
+#define SAVE_AUDIO_RAW          (0x08)
+#define SAVE_AUDIO_RNNOISED     (0x04)
+#define SAVE_AUDIO_RESAMPLED    (0x02)
+#define SAVE_AUDIO_VAD          (0x01)
+
+
 //#include <format>
 // ---------------------------------------------------------------------
 // Some constants:
@@ -76,7 +84,7 @@ public:
     }
 
     // 阻塞连续块读出
-    void dequeue(void* pdata, size_t blockSize) {
+    bool dequeue(void* pdata, size_t blockSize) {
         std::unique_lock<std::mutex> lock(mutex_);
 
         //std::cout << "Before dequeue" << std::endl;
@@ -87,8 +95,14 @@ public:
         auto isCapacityEnough = [&]() {
             return size_ >= blockSize;
         };
+        bool status = conditionVariable_.wait_for(lock, std::chrono::seconds(1),isCapacityEnough);
 
-        conditionVariable_.wait(lock, isCapacityEnough);
+        if (status == false)
+        {
+            lock.unlock();
+            std::cout << "[dequeue] conditionVariable_.wait_for timeout" << std::endl;
+            return false;
+        }
 
 
         size_t remainingData = capacity_ - readIndex_;
@@ -114,6 +128,8 @@ public:
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
         conditionVariable_.notify_one();  // 通知写入线程队列有足够空间
+
+        return true;
     }
 
     // 判断队列是否为空
@@ -174,6 +190,8 @@ public:
 
         close();
 
+        filename_ = filename;
+
         if (bits_per_sample == 32)
             pfile_ = new SndfileHandle (filename.c_str(), SFM_WRITE, SF_FORMAT_WAV | SF_FORMAT_FLOAT, channels, sample_rate) ;
         else if (bits_per_sample == 16)
@@ -194,8 +212,13 @@ public:
             pfile_=NULL;
         }
     }
+
+    const std::string get_filename() const {
+        return filename_;
+    }
 private:
     SndfileHandle * pfile_; 
+    std::string filename_;
 };
 
 
@@ -216,8 +239,8 @@ private:
 class timestamp_t
 {
 public:
-    int start;
-    int end;
+    int64_t start;
+    int64_t end;
 
     // default + parameterized constructor
     timestamp_t(int start = -1, int end = -1)
@@ -316,8 +339,8 @@ private:
     void reset_states()
     {
         // Call reset before each audio start
-        std::memset(_h.data(), 0.0f, _h.size() * sizeof(float));
-        std::memset(_c.data(), 0.0f, _c.size() * sizeof(float));
+        std::memset(_h.data(), 0, _h.size() * sizeof(float));
+        std::memset(_c.data(), 0, _c.size() * sizeof(float));
         triggered = false;
         temp_end = 0;
         current_sample = 0;
@@ -485,7 +508,7 @@ public:
 
         audio_length_samples = input_wav.size();
 
-        for (int j = 0; j < audio_length_samples; j += window_size_samples)
+        for (size_t j = 0; j < audio_length_samples; j += window_size_samples)
         {
             if (j + window_size_samples > audio_length_samples)
                 break;
@@ -530,8 +553,8 @@ public:
     void drop_chunks(const std::vector<float>& input_wav, std::vector<float>& output_wav)
     {
         output_wav.clear();
-        int current_start = 0;
-        for (int i = 0; i < speeches.size(); i++) {
+        int64_t current_start = 0;
+        for (size_t i = 0; i < speeches.size(); i++) {
 
             std::vector<float> slice(&input_wav[current_start], &input_wav[speeches[i].start]);
             output_wav.insert(output_wav.end(), slice.begin(), slice.end());
@@ -553,15 +576,15 @@ private:
     int min_speech_samples; // sr_per_ms * #ms
     float max_speech_samples;
     int speech_pad_samples; // usually a 
-    int audio_length_samples;
+    size_t audio_length_samples;
 
     // model states
     bool triggered = false;
-    unsigned int temp_end = 0;
-    unsigned int current_sample = 0;
+    int64_t temp_end = 0;
+    int64_t current_sample = 0;
     // MAX 4294967295 samples / 8sample per ms / 1000 / 60 = 8947 minutes  
-    int prev_end;
-    int next_start = 0;
+    int64_t prev_end;
+    int64_t next_start = 0;
 
     //Output timestamp
     std::vector<timestamp_t> speeches;
@@ -681,7 +704,7 @@ class AudioBuffer : public CircularQueue<T>
     	AudioBuffer(size_t capacity) : CircularQueue<T>(capacity), 
                                         srcState(NULL), 
                                         resample_outputBuffer(NULL), 
-                                        m_bSaveAudio(false)
+                                        m_un8SaveAudioFlag(0)
         {
 
 			srcState = src_new(SRC_SINC_BEST_QUALITY, 1, NULL);
@@ -717,8 +740,21 @@ class AudioBuffer : public CircularQueue<T>
     			src_delete(srcState);
     			srcState = NULL;
 			}
-            if(m_bSaveAudio){
-                wavWriter.close();
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_RAW)
+            {
+                wavWriterRaw.close();
+            }
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
+            {
+                wavWriterRnnoised.close();
+            }
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_RESAMPLED)
+            {
+                wavWriterResampled.close();
+            }
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_VAD)
+            {
+                wavWriterVad.close();
             }
 
 		 };
@@ -738,14 +774,20 @@ class AudioBuffer : public CircularQueue<T>
 
 			T** pData = (T**) pInputBuffer;
 
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_RAW)
+            {
+                wavWriterRaw.write(pData[0], iFramesPerBuffer);
+            }
+
             if (rnnoise.available())
             {
                 rnnoise.process(pData[0], iFramesPerBuffer);
             }
 
-            if (m_bSaveAudio)
+
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
             {
-                wavWriter.write(pData[0], iFramesPerBuffer);// Copy all the frames over to our internal vector of samples
+                this->wavWriterRnnoised.write(pData[0], iFramesPerBuffer);// Copy all the frames over to our internal vector of samples
             }
             src_data.data_in = pData[0];
             src_data.input_frames = iFramesPerBuffer; 
@@ -754,10 +796,10 @@ class AudioBuffer : public CircularQueue<T>
                 std::cout << "Error: " << src_strerror(error) << std::endl;
             }
 
-            //if(m_bSaveAudio)
-            //{
-            //    wavWriter.write(src_data.data_out,src_data.output_frames_gen);
-            //}
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_RESAMPLED)
+            {
+                this->wavWriterResampled.write(src_data.data_out, src_data.output_frames_gen);
+            }
 
 			this->enqueue(src_data.data_out, src_data.output_frames_gen);
 
@@ -795,16 +837,32 @@ class AudioBuffer : public CircularQueue<T>
 			return paContinue;
 		};
 
-        void Save_Audio(bool save_audio)
+        void setSaveAudioFlag(uint8_t save_audio)
         {
-            if(save_audio)
+            time_t now = time(0);
+            char buffer[80];
+            strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", localtime(&now));
+
+            m_un8SaveAudioFlag = save_audio;
+            if(m_un8SaveAudioFlag & SAVE_AUDIO_RAW)
             {
-                time_t now = time(0);
-                char buffer[80];
-                strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", localtime(&now));
-                std::string filename = std::string(buffer) + ".wav";
-                wavWriter.open(filename, INPUT_SAMPLE_RATE, 32, 1);
-                m_bSaveAudio = save_audio;
+                std::string filename = std::string(buffer) + "_raw.wav";
+                wavWriterRaw.open(filename, (uint32_t)INPUT_SAMPLE_RATE, 32, 1);
+            }
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
+            {
+                std::string filename = std::string(buffer) + "_rnnoise.wav";
+                wavWriterRnnoised.open(filename, (uint32_t)INPUT_SAMPLE_RATE, 32, 1);
+            }
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_RESAMPLED)
+            {
+                std::string filename = std::string(buffer) + "_resample.wav";
+                wavWriterResampled.open(filename, (uint32_t)OUTPOUT_SAMPLE_RATE, 32, 1);
+            }
+            if (m_un8SaveAudioFlag & SAVE_AUDIO_VAD)
+            {
+                std::string filename = std::string(buffer) + "_vad.wav";
+                wavWriterVad.open(filename, (uint32_t)OUTPOUT_SAMPLE_RATE, 32, 1);
             }
         }
 
@@ -816,9 +874,13 @@ class AudioBuffer : public CircularQueue<T>
         // RNN-based noise suppression
         RNNoiseIterator rnnoise;
 
+public:
+        uint8_t m_un8SaveAudioFlag;
 
-        bool m_bSaveAudio;
-        wav_writer wavWriter;
+        wav_writer wavWriterRaw;
+        wav_writer wavWriterRnnoised;
+        wav_writer wavWriterResampled;
+        wav_writer wavWriterVad;
 };
 //
 // PortAudio Audio capture
@@ -831,12 +893,13 @@ public:
     audio_async(); 
     ~audio_async();
 
-    bool init(int iInputDevice, bool save_audio = false);
+    bool init(int iInputDevice, uint8_t save_audio = 0);
 
     // start capturing audio via the provided SDL callback
     // keep last len_ms seconds of audio in a circular buffer
     bool resume();
     bool pause();
+    void close();
     bool clear();
     double memory_usage_info() {
         return (double)m_pAudioBuffer->size()/m_pAudioBuffer->capacity();
@@ -844,14 +907,22 @@ public:
 
 
     // get audio data from the circular buffer
-    void get(int frames, std::vector<float> & audio);
+    bool get(int frames, std::vector<float> & audio);
+
+    void write_vad_audio(const float * const data, size_t length)
+    {
+        if (m_pAudioBuffer->m_un8SaveAudioFlag & SAVE_AUDIO_VAD)
+        {
+            m_pAudioBuffer->wavWriterVad.write(data, length);
+        }
+    }
 
 private:
     portaudio::AutoSystem mautoSys;
     portaudio::DirectionSpecificStreamParameters * m_pInParamsRecord;
     portaudio::StreamParameters * m_pParamsRecord;
     portaudio::MemFunCallbackStream<AudioBuffer<float>> * m_pStreamRecord;
-    bool m_running;
+    volatile std::atomic_bool m_running;
     AudioBuffer<float> * m_pAudioBuffer;
     portaudio::System *m_psys;
 };

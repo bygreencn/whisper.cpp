@@ -186,6 +186,7 @@ else()
     #add_subdirectory(talk)
     #add_subdirectory(talk-llama)
     #add_subdirectory(lsp)
+    #add_subdirectory(wchess)
 endif()
 
-add_subdirectory(wchess)
+
