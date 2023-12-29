@@ -43,7 +43,8 @@ public:
 
     // 阻塞连续块写入
 public:
-    void enqueue(const void* pdata, size_t blockSize) {
+    bool enqueue(const void* pdata, size_t blockSize) {
+        int retry = 2;
         std::unique_lock<std::mutex> lock(mutex_);
 
         //std::cout << "Before enqueue" << std::endl;
@@ -55,7 +56,15 @@ public:
             return ((capacity_-size_) >= blockSize);
         };
 
-        conditionVariable_.wait(lock, isCapacityEnough);
+
+        volatile bool status = conditionVariable_.wait_for(lock, std::chrono::microseconds(100), isCapacityEnough);
+
+        if (status == false)
+        {
+            lock.unlock();
+            std::cout << "[enqueue] timeout" << std::endl;
+            return false;
+        }
 
         // 执行连续写入
         size_t remainingSpace = capacity_ - writeIndex_;
@@ -81,6 +90,8 @@ public:
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
         conditionVariable_.notify_one();  // 通知读取线程数据已经可用
+
+        return true;
     }
 
     // 阻塞连续块读出
@@ -95,12 +106,12 @@ public:
         auto isCapacityEnough = [&]() {
             return size_ >= blockSize;
         };
-        bool status = conditionVariable_.wait_for(lock, std::chrono::seconds(1),isCapacityEnough);
+        volatile bool status = conditionVariable_.wait_for(lock, std::chrono::microseconds(100),isCapacityEnough);
 
         if (status == false)
         {
             lock.unlock();
-            std::cout << "[dequeue] conditionVariable_.wait_for timeout" << std::endl;
+            //std::cout << "[dequeue] timeout" << std::endl;
             return false;
         }
 
