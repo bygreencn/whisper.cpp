@@ -15,7 +15,7 @@
 #include <sndfile.h>
 
 
-static volatile bool is_running = true;
+static bool is_running = true;
 void exit_handler(int signo) {
     if (signo == SIGINT)
         printf("received SIGINT, while exit soon\n");
@@ -141,11 +141,11 @@ int main(int argc, char ** argv) {
     signal(SIGINT, exit_handler);
 
     whisper_params params;
-    VadIterator silero_vad(L"silero_vad.onnx");
-
     if (whisper_params_parse(argc, argv, params) == false) {
         return 1;
     }
+
+
 
     params.keep_s   = std::min(params.keep_s,   params.step_s);
     params.length_s = std::max(params.length_s, params.step_s);
@@ -171,6 +171,9 @@ int main(int argc, char ** argv) {
         printf("%s: audio.init() failed!\n", __func__);
         return 1;
     }
+
+    // init silero vad
+    VadIterator silero_vad(L"silero_vad.onnx");
 
     audio.resume();
 
@@ -303,7 +306,7 @@ int main(int argc, char ** argv) {
             break;
         }
 
-        printf("\n***memory usage : %4.3f\n",audio.memory_usage_info());
+        printf("\n***memory usage : %7.6f\n",audio.memory_usage_info());
 
         if (params.save_audio && SAVE_AUDIO_VAD)
         {
@@ -339,14 +342,20 @@ int main(int argc, char ** argv) {
 
             wparams.n_max_text_ctx = 0;
 
-            if (whisper_full(ctx, wparams, pcmf32.data(), (int)pcmf32.size()) != 0) {
-                fprintf(stderr, "%s: failed to process audio\n", argv[0]);
-                return 6;
+
+            {
+                wparams.abort_callback = [](void* user_data) {
+                    bool is_aborted = ((*(bool*)user_data) == false);
+                    return is_aborted;
+                };
+                wparams.abort_callback_user_data = &is_running;
             }
 
-            if (!is_running) {
+            if (whisper_full(ctx, wparams, pcmf32.data(), (int)pcmf32.size()) != 0) {
+                std::cout << "aborted to process audio\n" << std::endl;
                 break;
             }
+
 
             // print result;
             {
