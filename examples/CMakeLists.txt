@@ -15,6 +15,10 @@ if (WHISPER_SDL2)
     message(STATUS "SDL2_LIBRARIES = ${SDL2_LIBRARIES}")
 endif()
 
+if (WHISPER_CLBLAST)
+    find_package(CLBlast REQUIRED)
+endif()
+
 # common
 
 set(TARGET common)
