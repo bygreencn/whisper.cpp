@@ -18,7 +18,7 @@
 #endif
 
 using namespace httplib;
-using json = nlohmann::json;
+using json = nlohmann::ordered_json;
 
 namespace {
 
@@ -543,7 +543,76 @@ int main(int argc, char ** argv) {
                              {"Access-Control-Allow-Origin", "*"},
                              {"Access-Control-Allow-Headers", "content-type"}});
 
-    std::string const default_content = "<html>hello</html>";
+    std::string const default_content = R"(
+    <html>
+    <head>
+        <title>Whisper.cpp Server</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width">
+        <style>
+        body {
+            font-family: sans-serif;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        label {
+            margin-bottom: 0.5rem;
+        }
+        input, select {
+            margin-bottom: 1rem;
+        }
+        button {
+            margin-top: 1rem;
+        }
+        </style>
+    </head>
+    <body>
+        <h1>Whisper.cpp Server</h1>
+
+        <h2>/inference</h2>
+        <pre>
+    curl 127.0.0.1:)" + std::to_string(sparams.port) + R"(/inference \
+    -H "Content-Type: multipart/form-data" \
+    -F file="@&lt;file-path&gt;" \
+    -F temperature="0.0" \
+    -F temperature_inc="0.2" \
+    -F response_format="json"
+        </pre>
+
+        <h2>/load</h2>
+        <pre>
+    curl 127.0.0.1:)" + std::to_string(sparams.port) + R"(/load \
+    -H "Content-Type: multipart/form-data" \
+    -F model="&lt;path-to-model-file&gt;"
+        </pre>
+
+        <div>
+            <h2>Try it out</h2>
+            <form action="/inference" method="POST" enctype="multipart/form-data">
+                <label for="file">Choose an audio file:</label>
+                <input type="file" id="file" name="file" accept="audio/*" required><br>
+
+                <label for="temperature">Temperature:</label>
+                <input type="number" id="temperature" name="temperature" value="0.0" step="0.01" placeholder="e.g., 0.0"><br>
+
+                <label for="response_format">Response Format:</label>
+                <select id="response_format" name="response_format">
+                    <option value="verbose_json">Verbose JSON</option>
+                    <option value="json">JSON</option>
+                    <option value="text">Text</option>
+                    <option value="srt">SRT</option>
+                    <option value="vtt">VTT</option>
+                </select><br>
+
+                <button type="submit">Submit</button>
+            </form>
+        </div>
+    </body>
+    </html>
+    )";
 
     // store default params so we can reset after each inference request
     whisper_params default_params = params;
@@ -556,7 +625,7 @@ int main(int argc, char ** argv) {
 
     svr.Post(sparams.request_path + "/inference", [&](const Request &req, Response &res){
         // acquire whisper model mutex lock
-        whisper_mutex.lock();
+        std::lock_guard<std::mutex> lock(whisper_mutex);
 
         // first check user requested fields of the request
         if (!req.has_file("file"))
@@ -564,7 +633,6 @@ int main(int argc, char ** argv) {
             fprintf(stderr, "error: no 'file' field in the request\n");
             const std::string error_resp = "{\"error\":\"no 'file' field in the request\"}";
             res.set_content(error_resp, "application/json");
-            whisper_mutex.unlock();
             return;
         }
         auto audio_file = req.get_file_value("file");
@@ -579,35 +647,42 @@ int main(int argc, char ** argv) {
         std::vector<float> pcmf32;               // mono-channel F32 PCM
         std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
 
-        // write to temporary file
-        const std::string temp_filename = "whisper_server_temp_file.wav";
-        std::ofstream temp_file{temp_filename, std::ios::binary};
-        temp_file << audio_file.content;
-        temp_file.close();
-
-        // if file is not wav, convert to wav
-
         if (sparams.ffmpeg_converter) {
+            // if file is not wav, convert to wav
+            // write to temporary file
+            const std::string temp_filename = "whisper_server_temp_file.wav";
+            std::ofstream temp_file{temp_filename, std::ios::binary};
+            temp_file << audio_file.content;
+            temp_file.close();
+
             std::string error_resp = "{\"error\":\"Failed to execute ffmpeg command.\"}";
             const bool is_converted = convert_to_wav(temp_filename, error_resp);
             if (!is_converted) {
                 res.set_content(error_resp, "application/json");
-                whisper_mutex.unlock();
+                return;
+            }
+
+            // read wav content into pcmf32
+            if (!::read_wav(temp_filename, pcmf32, pcmf32s, params.diarize))
+            {
+                fprintf(stderr, "error: failed to read WAV file '%s'\n", temp_filename.c_str());
+                const std::string error_resp = "{\"error\":\"failed to read WAV file\"}";
+                res.set_content(error_resp, "application/json");
+                std::remove(temp_filename.c_str());
+                return;
+            }
+            // remove temp file
+            std::remove(temp_filename.c_str());
+        } else {
+            if (!::read_wav(audio_file.content, pcmf32, pcmf32s, params.diarize))
+            {
+                fprintf(stderr, "error: failed to read WAV file\n");
+                const std::string error_resp = "{\"error\":\"failed to read WAV file\"}";
+                res.set_content(error_resp, "application/json");
                 return;
             }
         }
 
-        // read wav content into pcmf32
-        if (!::read_wav(temp_filename, pcmf32, pcmf32s, params.diarize)) {
-            fprintf(stderr, "error: failed to read WAV file '%s'\n", temp_filename.c_str());
-            const std::string error_resp = "{\"error\":\"failed to read WAV file\"}";
-            res.set_content(error_resp, "application/json");
-            std::remove(temp_filename.c_str());
-            whisper_mutex.unlock();
-            return;
-        }
-        // remove temp file
-        std::remove(temp_filename.c_str());
 
         printf("Successfully loaded %s\n", filename.c_str());
 
@@ -681,6 +756,7 @@ int main(int argc, char ** argv) {
             wparams.logprob_thold    = params.logprob_thold;
 
             wparams.no_timestamps    = params.no_timestamps;
+            wparams.token_timestamps = !params.no_timestamps && params.response_format == vjson_format;
 
             whisper_print_user_data user_data = { &params, &pcmf32s, 0 };
 
@@ -724,7 +800,6 @@ int main(int argc, char ** argv) {
                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
                 const std::string error_resp = "{\"error\":\"failed to process audio\"}";
                 res.set_content(error_resp, "application/json");
-                whisper_mutex.unlock();
                 return;
             }
         }
@@ -778,6 +853,59 @@ int main(int argc, char ** argv) {
                 ss << speaker << text << "\n\n";
             }
             res.set_content(ss.str(), "text/vtt");
+        } else if (params.response_format == vjson_format) {
+            /* try to match openai/whisper's Python format */
+            std::string results = output_str(ctx, params, pcmf32s);
+            json jres = json{
+                {"task", params.translate ? "translate" : "transcribe"},
+                {"language", whisper_lang_str_full(whisper_full_lang_id(ctx))},
+                {"duration", float(pcmf32.size())/WHISPER_SAMPLE_RATE},
+                {"text", results},
+                {"segments", json::array()}
+            };
+            const int n_segments = whisper_full_n_segments(ctx);
+            for (int i = 0; i < n_segments; ++i)
+            {
+                json segment = json{
+                    {"id", i},
+                    {"text", whisper_full_get_segment_text(ctx, i)},
+                };
+
+                if (!params.no_timestamps) {
+                    segment["start"] = whisper_full_get_segment_t0(ctx, i) * 0.01;
+                    segment["end"] = whisper_full_get_segment_t1(ctx, i) * 0.01;
+                }
+
+                float total_logprob = 0;
+                const int n_tokens = whisper_full_n_tokens(ctx, i);
+                for (int j = 0; j < n_tokens; ++j) {
+                    whisper_token_data token = whisper_full_get_token_data(ctx, i, j);
+                    if (token.id >= whisper_token_eot(ctx)) {
+                        continue;
+                    }
+
+                    segment["tokens"].push_back(token.id);
+                    json word = json{{"word", whisper_full_get_token_text(ctx, i, j)}};
+                    if (!params.no_timestamps) {
+                        word["start"] = token.t0 * 0.01;
+                        word["end"] = token.t1 * 0.01;
+                    }
+                    word["probability"] = token.p;
+                    total_logprob += token.plog;
+                    segment["words"].push_back(word);
+                }
+
+                segment["temperature"] = params.temperature;
+                segment["avg_logprob"] = total_logprob / n_tokens;
+
+                // TODO compression_ratio and no_speech_prob are not implemented yet
+                // segment["compression_ratio"] = 0;
+                // segment["no_speech_prob"] = 0;
+
+                jres["segments"].push_back(segment);
+            }
+            res.set_content(jres.dump(-1, ' ', false, json::error_handler_t::replace),
+                            "application/json");
         }
         // TODO add more output formats
         else
@@ -792,18 +920,14 @@ int main(int argc, char ** argv) {
 
         // reset params to thier defaults
         params = default_params;
-
-        // return whisper model mutex lock
-        whisper_mutex.unlock();
     });
     svr.Post(sparams.request_path + "/load", [&](const Request &req, Response &res){
-        whisper_mutex.lock();
+        std::lock_guard<std::mutex> lock(whisper_mutex);
         if (!req.has_file("model"))
         {
             fprintf(stderr, "error: no 'model' field in the request\n");
             const std::string error_resp = "{\"error\":\"no 'model' field in the request\"}";
             res.set_content(error_resp, "application/json");
-            whisper_mutex.unlock();
             return;
         }
         std::string model = req.get_file_value("model").content;
@@ -812,7 +936,6 @@ int main(int argc, char ** argv) {
             fprintf(stderr, "error: 'model': %s not found!\n", model.c_str());
             const std::string error_resp = "{\"error\":\"model not found!\"}";
             res.set_content(error_resp, "application/json");
-            whisper_mutex.unlock();
             return;
         }
 
@@ -835,7 +958,6 @@ int main(int argc, char ** argv) {
         res.set_content(success, "application/text");
 
         // check if the model is in the file system
-        whisper_mutex.unlock();
     });
 
     svr.set_exception_handler([](const Request &, Response &res, std::exception_ptr ep) {
