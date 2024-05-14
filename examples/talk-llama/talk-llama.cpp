@@ -35,10 +35,10 @@ std::vector<llama_token> llama_tokenize(struct llama_context * ctx, const std::s
 
 std::string llama_token_to_piece(const struct llama_context * ctx, llama_token token) {
     std::vector<char> result(8, 0);
-    const int n_tokens = llama_token_to_piece(llama_get_model(ctx), token, result.data(), result.size());
+    const int n_tokens = llama_token_to_piece(llama_get_model(ctx), token, result.data(), result.size(), false);
     if (n_tokens < 0) {
         result.resize(-n_tokens);
-        int check = llama_token_to_piece(llama_get_model(ctx), token, result.data(), result.size());
+        int check = llama_token_to_piece(llama_get_model(ctx), token, result.data(), result.size(), false);
         GGML_ASSERT(check == -n_tokens);
     } else {
         result.resize(n_tokens);
@@ -75,6 +75,7 @@ struct whisper_params {
     std::string model_wsp   = "models/ggml-base.en.bin";
     std::string model_llama = "models/ggml-llama-7B.bin";
     std::string speak       = "./examples/talk-llama/speak";
+    std::string speak_file  = "./examples/talk-llama/to_speak.txt";
     std::string prompt      = "";
     std::string fname_out;
     std::string path_session = "";       // path to file for saving/loading model eval state
@@ -113,6 +114,7 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-mw"  || arg == "--model-whisper")  { params.model_wsp      = argv[++i]; }
         else if (arg == "-ml"  || arg == "--model-llama")    { params.model_llama    = argv[++i]; }
         else if (arg == "-s"   || arg == "--speak")          { params.speak          = argv[++i]; }
+        else if (arg == "-sf"  || arg == "--speak-file")     { params.speak_file     = argv[++i]; }
         else if (arg == "--prompt-file")                     {
             std::ifstream file(argv[++i]);
             std::copy(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>(), back_inserter(params.prompt));
@@ -160,6 +162,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -mw FILE, --model-whisper  [%-7s] whisper model file\n",                          params.model_wsp.c_str());
     fprintf(stderr, "  -ml FILE, --model-llama    [%-7s] llama model file\n",                            params.model_llama.c_str());
     fprintf(stderr, "  -s FILE,  --speak TEXT     [%-7s] command for TTS\n",                             params.speak.c_str());
+    fprintf(stderr, "  -sf FILE, --speak-file     [%-7s] file to pass to TTS\n",                         params.speak_file.c_str());
     fprintf(stderr, "  --prompt-file FNAME        [%-7s] file with custom prompt to start dialog\n",     "");
     fprintf(stderr, "  --session FNAME                   file to cache model state in (may be large!) (default: none)\n");
     fprintf(stderr, "  -f FNAME, --file FNAME     [%-7s] text output file name\n",                       params.fname_out.c_str());
@@ -281,14 +284,14 @@ int main(int argc, char ** argv) {
 
     // whisper init
 
-    struct whisper_context_params cparams;
+    struct whisper_context_params cparams = whisper_context_default_params();
     cparams.use_gpu = params.use_gpu;
 
     struct whisper_context * ctx_wsp = whisper_init_from_file_with_params(params.model_wsp.c_str(), cparams);
 
     // llama init
 
-    llama_backend_init(true);
+    llama_backend_init();
 
     auto lmparams = llama_model_default_params();
     if (!params.use_gpu) {
@@ -388,6 +391,8 @@ int main(int argc, char ** argv) {
 
     prompt_llama = ::replace(prompt_llama, "{4}", chat_symb);
 
+    llama_batch batch = llama_batch_init(llama_n_ctx(ctx_llama), 0, 1);
+
     // init session
     std::string path_session = params.path_session;
     std::vector<llama_token> session_tokens;
@@ -423,8 +428,21 @@ int main(int argc, char ** argv) {
     printf("\n");
     printf("%s : initializing - please wait ...\n", __func__);
 
-    if (llama_eval(ctx_llama, embd_inp.data(), embd_inp.size(), 0)) {
-        fprintf(stderr, "%s : failed to eval\n", __func__);
+    // prepare batch
+    {
+        batch.n_tokens = embd_inp.size();
+
+        for (int i = 0; i < batch.n_tokens; i++) {
+            batch.token[i]     = embd_inp[i];
+            batch.pos[i]       = i;
+            batch.n_seq_id[i]  = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i]    = i == batch.n_tokens - 1;
+        }
+    }
+
+    if (llama_decode(ctx_llama, batch)) {
+        fprintf(stderr, "%s : failed to decode\n", __func__);
         return 1;
     }
 
@@ -546,10 +564,7 @@ int main(int argc, char ** argv) {
 
                 // optionally give audio feedback that the current text is being processed
                 if (!params.heard_ok.empty()) {
-                    int ret = system((params.speak + " " + std::to_string(voice_id) + " '" + params.heard_ok + "'").c_str());
-                    if (ret != 0) {
-                        fprintf(stderr, "%s: failed to speak\n", __func__);
-                    }
+                    speak_with_file(params.speak, params.heard_ok, params.speak_file, voice_id);
                 }
 
                 // remove text between brackets using regex
@@ -647,8 +662,21 @@ int main(int argc, char ** argv) {
                             n_session_consumed = session_tokens.size();
                         }
 
-                        if (llama_eval(ctx_llama, embd.data(), embd.size(), n_past)) {
-                            fprintf(stderr, "%s : failed to eval\n", __func__);
+                        // prepare batch
+                        {
+                            batch.n_tokens = embd.size();
+
+                            for (int i = 0; i < batch.n_tokens; i++) {
+                                batch.token[i]     = embd[i];
+                                batch.pos[i]       = n_past + i;
+                                batch.n_seq_id[i]  = 1;
+                                batch.seq_id[i][0] = 0;
+                                batch.logits[i]    = i == batch.n_tokens - 1;
+                            }
+                        }
+
+                        if (llama_decode(ctx_llama, batch)) {
+                            fprintf(stderr, "%s : failed to decode\n", __func__);
                             return 1;
                         }
                     }
@@ -719,6 +747,7 @@ int main(int argc, char ** argv) {
                             text_to_speak += llama_token_to_piece(ctx_llama, id);
 
                             printf("%s", llama_token_to_piece(ctx_llama, id).c_str());
+                            fflush(stdout);
                         }
                     }
 
@@ -747,11 +776,7 @@ int main(int argc, char ** argv) {
                     }
                 }
 
-                text_to_speak = ::replace(text_to_speak, "'", "'\"'\"'");
-                int ret = system((params.speak + " " + std::to_string(voice_id) + " '" + text_to_speak + "'").c_str());
-                if (ret != 0) {
-                    fprintf(stderr, "%s: failed to speak\n", __func__);
-                }
+                speak_with_file(params.speak, text_to_speak, params.speak_file, voice_id);
 
                 audio.clear();
             }

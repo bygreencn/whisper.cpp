@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![npm](https://img.shields.io/npm/v/whisper.cpp.svg)](https://www.npmjs.com/package/whisper.cpp/)
 
-Stable: [v1.5.4](https://github.com/ggerganov/whisper.cpp/releases/tag/v1.5.4) / [Roadmap | F.A.Q.](https://github.com/ggerganov/whisper.cpp/discussions/126)
+Stable: [v1.5.5](https://github.com/ggerganov/whisper.cpp/releases/tag/v1.5.5) / [Roadmap | F.A.Q.](https://github.com/ggerganov/whisper.cpp/discussions/126)
 
 High-performance inference of [OpenAI's Whisper](https://github.com/openai/whisper) automatic speech recognition (ASR) model:
 
@@ -278,6 +278,7 @@ speed-up - more than x3 faster compared with CPU-only execution. Here are the in
 
   - To ensure `coremltools` operates correctly, please confirm that [Xcode](https://developer.apple.com/xcode/) is installed and execute `xcode-select --install` to install the command-line tools.
   - Python 3.10 is recommended.
+  - MacOS Sonoma (version 14) or newer is recommended, as older versions of MacOS might experience issues with transcription hallucination.
   - [OPTIONAL] It is recommended to utilize a Python version management system, such as [Miniconda](https://docs.conda.io/en/latest/miniconda.html) for this step:
     - To create an environment, use: `conda create -n py310-whisper python=3.10 -y`
     - To activate the environment, use: `conda activate py310-whisper`
@@ -339,7 +340,7 @@ This can result in significant speedup in encoder performance. Here are the inst
   python -m venv openvino_conv_env
   openvino_conv_env\Scripts\activate
   python -m pip install --upgrade pip
-  pip install -r openvino-conversion-requirements.txt
+  pip install -r requirements-openvino.txt
   ```
 
   Linux and macOS:
@@ -349,7 +350,7 @@ This can result in significant speedup in encoder performance. Here are the inst
   python3 -m venv openvino_conv_env
   source openvino_conv_env/bin/activate
   python -m pip install --upgrade pip
-  pip install -r openvino-conversion-requirements.txt
+  pip install -r requirements-openvino.txt
   ```
 
 - Generate an OpenVINO encoder model. For example, to generate a `base.en` model, use:
@@ -413,11 +414,11 @@ For more information about the Core ML implementation please refer to PR [#1037]
 With NVIDIA cards the processing of the models is done efficiently on the GPU via cuBLAS and custom CUDA kernels.
 First, make sure you have installed `cuda`: https://developer.nvidia.com/cuda-downloads
 
-Now build `whisper.cpp` with cuBLAS support:
+Now build `whisper.cpp` with CUDA support:
 
 ```
 make clean
-WHISPER_CUBLAS=1 make -j
+WHISPER_CUDA=1 make -j
 ```
 
 ## OpenCL GPU support via CLBlast
@@ -452,6 +453,21 @@ Now build `whisper.cpp` with OpenBLAS support:
 ```
 make clean
 WHISPER_OPENBLAS=1 make -j
+```
+
+## BLAS CPU support via Intel MKL
+
+Encoder processing can be accelerated on the CPU via the BLAS compatible interface of Intel's Math Kernel Library.
+First, make sure you have installed Intel's MKL runtime and development packages: https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl-download.html
+
+Now build `whisper.cpp` with Intel MKL BLAS support:
+
+```
+source /opt/intel/oneapi/setvars.sh
+mkdir build
+cd build
+cmake -DWHISPER_MKL=ON ..
+WHISPER_MKL=1 make -j
 ```
 
 ## Docker
@@ -728,10 +744,10 @@ https://user-images.githubusercontent.com/1991296/199337538-b7b0c7a3-2753-4a88-a
 
 ## Video comparison of different models
 
-Use the [extra/bench-wts.sh](https://github.com/ggerganov/whisper.cpp/blob/master/extra/bench-wts.sh) script to generate a video in the following format:
+Use the [scripts/bench-wts.sh](https://github.com/ggerganov/whisper.cpp/blob/master/scripts/bench-wts.sh) script to generate a video in the following format:
 
 ```bash
-./extra/bench-wts.sh samples/jfk.wav
+./scripts/bench-wts.sh samples/jfk.wav
 ffplay ./samples/jfk.wav.all.mp4
 ```
 
@@ -752,7 +768,7 @@ Additionally a script to run whisper.cpp with different models and audio files i
 You can run it with the following command, by default it will run against any standard model in the models folder.
 
 ```bash
-python3 extra/bench.py -f samples/jfk.wav -t 2,4,8 -p 1,2
+python3 scripts/bench.py -f samples/jfk.wav -t 2,4,8 -p 1,2
 ```
 
 It is written in python with the intention of being easy to modify and extend for your benchmarking use case.
@@ -792,6 +808,7 @@ For more details, see the conversion script [models/convert-pt-to-ggml.py](model
   - [NickDarvey/whisper](https://github.com/NickDarvey/whisper)
 - [x] Python: | [#9](https://github.com/ggerganov/whisper.cpp/issues/9)
   - [stlukey/whispercpp.py](https://github.com/stlukey/whispercpp.py) (Cython)
+  - [AIWintermuteAI/whispercpp](https://github.com/AIWintermuteAI/whispercpp) (Updated fork of aarnphm/whispercpp)
   - [aarnphm/whispercpp](https://github.com/aarnphm/whispercpp) (Pybind11)
 - [x] R: [bnosac/audio.whisper](https://github.com/bnosac/audio.whisper)
 - [x] Unity: [macoron/whisper.unity](https://github.com/Macoron/whisper.unity)

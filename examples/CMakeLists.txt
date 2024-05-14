@@ -2,7 +2,6 @@
 
 find_package(Threads REQUIRED)
 
-
 # third-party
 
 if (WHISPER_SDL2)
@@ -28,15 +27,16 @@ add_library(${TARGET} STATIC
     common.cpp
     common-ggml.h
     common-ggml.cpp
+    grammar-parser.h
     grammar-parser.cpp
     )
 
 include(DefaultTargetOptions)
 
-
 target_link_libraries(${TARGET} PRIVATE whisper)
 
 set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(${TARGET} PROPERTIES FOLDER "libs")
 
 if (WHISPER_SDL2)
     # common-sdl
@@ -54,7 +54,14 @@ if (WHISPER_SDL2)
     target_link_libraries(${TARGET} PRIVATE ${SDL2_LIBRARIES})
 
     set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(${TARGET} PROPERTIES FOLDER "libs")
 endif()
+
+# add json lib
+add_library(json_cpp INTERFACE)
+target_include_directories(json_cpp INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+
+
 
 # Get all propreties that cmake supports
 if(NOT CMAKE_PROPERTY_LIST)
@@ -99,42 +106,42 @@ if (WHISPER_portaudio)
     if(SampleRate_FOUND)
         message(STATUS "SampleRate_VERSION = ${SampleRate_VERSION}")
     else(SampleRate_FOUND)
-        message(FATAL_ERROR SampleRate library not found¡±)
+        message(FATAL_ERROR SampleRate library not foundÂ¡Â±)
     endif(SampleRate_FOUND)
 
     find_package(SndFile REQUIRED)
     if(SndFile_FOUND)
         message(STATUS "SndFile_VERSION = ${SndFile_VERSION}")
     else(SndFile_FOUND)
-        message(FATAL_ERROR SndFile library not found¡±)
+        message(FATAL_ERROR SndFile library not foundÂ¡Â±)
     endif(SndFile_FOUND)
 
     find_package(PortAudio REQUIRED)
     if(PortAudio_FOUND)
         message(STATUS "PortAudio_VERSION = ${PortAudio_VERSION}")
     else(PortAudio_FOUND)
-        message(FATAL_ERROR PortAudio library not found¡±)
+        message(FATAL_ERROR PortAudio library not foundÂ¡Â±)
     endif(PortAudio_FOUND)
 
     find_package(PortAudioCpp REQUIRED)
     if(PortAudioCpp_FOUND)
         message(STATUS "PortAudioCpp_VERSION = ${PortAudioCpp_VERSION}")
     else(PortAudioCpp_FOUND)
-        message(FATAL_ERROR PortAudioCpp library not found¡±)
+        message(FATAL_ERROR PortAudioCpp library not foundÂ¡Â±)
     endif(PortAudioCpp_FOUND)
 
     find_package(onnxruntime REQUIRED)
     if(onnxruntime_FOUND)
         message(STATUS "onnxruntime_VERSION = ${onnxruntime_VERSION}")
     else(onnxruntime_FOUND)
-        message(FATAL_ERROR onnxruntime library not found¡±)
+        message(FATAL_ERROR onnxruntime library not foundÂ¡Â±)
     endif(onnxruntime_FOUND)
 
     find_package(rnnoise REQUIRED)
     if(rnnoise_FOUND)
         message(STATUS "rnnoise_VERSION = ${rnnoise_VERSION}")
     else(rnnoise_FOUND)
-        message(FATAL_ERROR rnnoise library not found¡±)
+        message(FATAL_ERROR rnnoise library not foundÂ¡Â±)
     endif(rnnoise_FOUND)
 
     #print_target_properties(SampleRate::samplerate)
@@ -173,24 +180,52 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 if (EMSCRIPTEN)
     add_subdirectory(whisper.wasm)
+    set_target_properties(libmain PROPERTIES FOLDER "libs")
     add_subdirectory(stream.wasm)
+    set_target_properties(libstream PROPERTIES FOLDER "libs")
     add_subdirectory(command.wasm)
+    set_target_properties(libcommand PROPERTIES FOLDER "libs")
     add_subdirectory(talk.wasm)
+    set_target_properties(libtalk PROPERTIES FOLDER "libs")
     add_subdirectory(bench.wasm)
+    set_target_properties(libbench PROPERTIES FOLDER "libs")
 elseif(CMAKE_JS_VERSION)
     add_subdirectory(addon.node)
+    set_target_properties(addon.node PROPERTIES FOLDER "examples")
 else()
     add_subdirectory(main)
-    #add_subdirectory(stream)
+    set_target_properties(main PROPERTIES FOLDER "examples")
+if (WHISPER_SDL2)
+    add_subdirectory(stream)
+    set_target_properties(stream PROPERTIES FOLDER "examples")
+endif (WHISPER_SDL2)
     add_subdirectory(stream-portaudio)
-    #add_subdirectory(server)
-    #add_subdirectory(command)
-    #add_subdirectory(bench)
-    #add_subdirectory(quantize)
-    #add_subdirectory(talk)
-    #add_subdirectory(talk-llama)
-    #add_subdirectory(lsp)
-    #add_subdirectory(wchess)
+    set_target_properties(stream PROPERTIES FOLDER "examples")
+    add_subdirectory(server)
+    set_target_properties(server PROPERTIES FOLDER "examples")
+if (WHISPER_SDL2)
+    add_subdirectory(command)
+    set_target_properties(command PROPERTIES FOLDER "examples")
+endif (WHISPER_SDL2)
+    add_subdirectory(bench)
+    set_target_properties(bench PROPERTIES FOLDER "examples")
+    add_subdirectory(quantize)
+    set_target_properties(quantize PROPERTIES FOLDER "examples")
+if (WHISPER_SDL2)
+    add_subdirectory(talk)
+    set_target_properties(talk PROPERTIES FOLDER "examples")
+    add_subdirectory(talk-llama)
+    set_target_properties(talk-llama PROPERTIES FOLDER "examples")
+    add_subdirectory(lsp)
+    set_target_properties(lsp PROPERTIES FOLDER "examples")
+    if (LLAMA_SYCL)
+        add_subdirectory(sycl)
+        set_target_properties(sycl PROPERTIES FOLDER "examples")
+    endif()
+endif (WHISPER_SDL2)
 endif()
 
-
+if (WHISPER_SDL2)
+    add_subdirectory(wchess)
+    set_target_properties(wchess PROPERTIES FOLDER "examples")
+endif (WHISPER_SDL2)

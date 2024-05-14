@@ -8,7 +8,7 @@
 // command-line parameters
 struct whisper_params {
     int32_t n_threads = std::min(4, (int32_t) std::thread::hardware_concurrency());
-    int32_t what = 0; // what to benchmark: 0 - whisper ecoder, 1 - memcpy, 2 - ggml_mul_mat
+    int32_t what = 0; // what to benchmark: 0 - whisper encoder, 1 - memcpy, 2 - ggml_mul_mat
 
     std::string model = "models/ggml-base.en.bin";
 
@@ -58,7 +58,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
 int whisper_bench_full(const whisper_params & params) {
     // whisper init
 
-    struct whisper_context_params cparams;
+    struct whisper_context_params cparams = whisper_context_default_params();
     cparams.use_gpu = params.use_gpu;
 
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
