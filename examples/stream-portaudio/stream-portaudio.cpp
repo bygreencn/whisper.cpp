@@ -26,6 +26,7 @@ void exit_handler(int signo) {
 
 //  500 -> 00:05.000
 // 6000 -> 01:00.000
+/*
 std::string to_timestamp(int64_t t) {
     int64_t sec = t/100;
     int64_t msec = t - sec*100;
@@ -37,7 +38,7 @@ std::string to_timestamp(int64_t t) {
 
     return std::string(buf);
 }
-
+*/
 // command-line parameters
 struct whisper_params {
     int32_t n_threads  = std::min(2, (int32_t) std::thread::hardware_concurrency());
