@@ -70,6 +70,7 @@ struct whisper_params {
     std::string language  = "zh";
     std::string model     = "models/ggml-base-q5_1.bin";
     std::string fname_out;
+    bool enable_rnnoise = true;
 };
 
 void whisper_print_usage(int argc, const char ** argv, const whisper_params & params);
@@ -102,6 +103,7 @@ bool whisper_params_parse(int argc, const char ** argv, whisper_params & params)
         else if (arg == "-sa"   || arg == "--save-audio")    { params.save_audio    = std::stoi(argv[++i]); }
         else if (arg == "-ng"   || arg == "--no-gpu")        { params.use_gpu       = false; }
         else if (arg == "-fa"   || arg == "--flash-attn")    { params.flash_attn    = true; }
+        else if (arg == "-nr"   || arg == "--no-rnnoise")    { params.enable_rnnoise = false; }
 
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
@@ -139,6 +141,7 @@ void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params 
     fprintf(stderr, "  -sa,      --save-audio    [%-7x] save the recorded audio to a file\n",              params.save_audio);
     fprintf(stderr, "  -ng,      --no-gpu        [%-7s] disable GPU inference\n",                          params.use_gpu ? "false" : "true");
     fprintf(stderr, "  -fa,      --flash-attn    [%-7s] flash attention during inference\n",               params.flash_attn ? "true" : "false");
+    fprintf(stderr, "  -nr,      --no-rnnoise    [%-7s] disable RNNoise\n",                                params.enable_rnnoise ? "true" : "false");
     fprintf(stderr, "\n");
 }
 
@@ -173,7 +176,7 @@ int run(int argc, const char ** argv) {
     // init audio
 
     audio_async audio;
-    if (!audio.init(params.capture_id, params.save_audio)) {
+    if (!audio.init(params.capture_id, params.save_audio, params.enable_rnnoise)) {
         printf("%s: audio.init() failed!\n", __func__);
         return 1;
     }

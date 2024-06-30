@@ -712,7 +712,7 @@ template<typename T>
 class AudioBuffer : public CircularQueue<T>
 {
 	public:
-    	AudioBuffer(size_t capacity) : CircularQueue<T>(capacity), 
+    	AudioBuffer(size_t capacity, bool enable_rnnoise = true) : CircularQueue<T>(capacity), 
                                         srcState(NULL), 
                                         resample_outputBuffer(NULL), 
                                         m_un8SaveAudioFlag(0)
@@ -736,10 +736,14 @@ class AudioBuffer : public CircularQueue<T>
 			src_data.end_of_input = 0;
 			src_data.src_ratio = (double)OUTPOUT_SAMPLE_RATE / INPUT_SAMPLE_RATE;
 
-           
-            if (!rnnoise.available())
-            {
-                cout << "AudioBuffer::RNNoise was NULL!" << endl;
+
+            m_bEnableRnnoise = enable_rnnoise;
+            if (m_bEnableRnnoise)
+            { 
+                if (!rnnoise.available())
+                {
+                    cout << "AudioBuffer::RNNoise was NULL!" << endl;
+                }
             }
 		};
 		~AudioBuffer() {
@@ -755,7 +759,7 @@ class AudioBuffer : public CircularQueue<T>
             {
                 wavWriterRaw.close();
             }
-            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
+            if (this->m_bEnableRnnoise && m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
             {
                 wavWriterRnnoised.close();
             }
@@ -790,13 +794,13 @@ class AudioBuffer : public CircularQueue<T>
                 wavWriterRaw.write(pData[0], iFramesPerBuffer);
             }
 
-            if (rnnoise.available())
+            if (m_bEnableRnnoise && rnnoise.available())
             {
                 rnnoise.process(pData[0], iFramesPerBuffer);
             }
 
 
-            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
+            if (m_bEnableRnnoise && m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
             {
                 this->wavWriterRnnoised.write(pData[0], iFramesPerBuffer);// Copy all the frames over to our internal vector of samples
             }
@@ -860,7 +864,7 @@ class AudioBuffer : public CircularQueue<T>
                 std::string filename = std::string(buffer) + "_raw.wav";
                 wavWriterRaw.open(filename, (uint32_t)INPUT_SAMPLE_RATE, 32, 1);
             }
-            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
+            if (this->m_bEnableRnnoise && m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
             {
                 std::string filename = std::string(buffer) + "_rnnoise.wav";
                 wavWriterRnnoised.open(filename, (uint32_t)INPUT_SAMPLE_RATE, 32, 1);
@@ -883,6 +887,7 @@ class AudioBuffer : public CircularQueue<T>
     	float              *resample_outputBuffer;
     	SRC_DATA            src_data;
         // RNN-based noise suppression
+        bool m_bEnableRnnoise;
         RNNoiseIterator rnnoise;
 
 public:
@@ -904,7 +909,7 @@ public:
     audio_async(); 
     ~audio_async();
 
-    bool init(int iInputDevice, uint8_t save_audio = 0);
+    bool init(int iInputDevice, uint8_t save_audio = 0, bool enable_rnnoise = true);
 
     // start capturing audio via the provided SDL callback
     // keep last len_ms seconds of audio in a circular buffer
