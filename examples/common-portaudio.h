@@ -336,7 +336,7 @@ private:
         // The method should be called in each thread/proc in multi-thread/proc work
         session_options.SetIntraOpNumThreads(intra_threads);
         session_options.SetInterOpNumThreads(inter_threads);
-        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
     };
 
     void init_onnx_model(const std::wstring& model_path)
@@ -350,8 +350,7 @@ private:
     void reset_states()
     {
         // Call reset before each audio start
-        std::memset(_h.data(), 0, _h.size() * sizeof(float));
-        std::memset(_c.data(), 0, _c.size() * sizeof(float));
+        std::memset(_state.data(), 0.0f, _state.size() * sizeof(float));
         triggered = false;
         temp_end = 0;
         current_sample = 0;
@@ -362,39 +361,34 @@ private:
         current_speech = timestamp_t();
     };
 
-    void predict(const std::vector<float>& data)
+    void predict(const std::vector<float> &data)
     {
         // Infer
         // Create ort tensors
         input.assign(data.begin(), data.end());
         Ort::Value input_ort = Ort::Value::CreateTensor<float>(
             memory_info, input.data(), input.size(), input_node_dims, 2);
+        Ort::Value state_ort = Ort::Value::CreateTensor<float>(
+            memory_info, _state.data(), _state.size(), state_node_dims, 3);
         Ort::Value sr_ort = Ort::Value::CreateTensor<int64_t>(
             memory_info, sr.data(), sr.size(), sr_node_dims, 1);
-        Ort::Value h_ort = Ort::Value::CreateTensor<float>(
-            memory_info, _h.data(), _h.size(), hc_node_dims, 3);
-        Ort::Value c_ort = Ort::Value::CreateTensor<float>(
-            memory_info, _c.data(), _c.size(), hc_node_dims, 3);
 
         // Clear and add inputs
         ort_inputs.clear();
         ort_inputs.emplace_back(std::move(input_ort));
+        ort_inputs.emplace_back(std::move(state_ort));
         ort_inputs.emplace_back(std::move(sr_ort));
-        ort_inputs.emplace_back(std::move(h_ort));
-        ort_inputs.emplace_back(std::move(c_ort));
 
         // Infer
         ort_outputs = session->Run(
-            Ort::RunOptions{ nullptr },
+            Ort::RunOptions{nullptr},
             input_node_names.data(), ort_inputs.data(), ort_inputs.size(),
             output_node_names.data(), output_node_names.size());
 
         // Output probability & update h,c recursively
         float speech_prob = ort_outputs[0].GetTensorMutableData<float>()[0];
-        float* hn = ort_outputs[1].GetTensorMutableData<float>();
-        std::memcpy(_h.data(), hn, size_hc * sizeof(float));
-        float* cn = ort_outputs[2].GetTensorMutableData<float>();
-        std::memcpy(_c.data(), cn, size_hc * sizeof(float));
+        float *stateN = ort_outputs[1].GetTensorMutableData<float>();
+        std::memcpy(_state.data(), stateN, size_state * sizeof(float));
 
         // Push forward sample index
         current_sample += window_size_samples;
@@ -419,7 +413,7 @@ private:
                 current_speech.start = current_sample - window_size_samples;
             }
             return;
-    }
+        }
 
         if (
             (triggered == true)
@@ -429,11 +423,11 @@ private:
                 current_speech.end = prev_end;
                 speeches.push_back(current_speech);
                 current_speech = timestamp_t();
-
+                
                 // previously reached silence(< neg_thres) and is still not speech(< thres)
                 if (next_start < prev_end)
                     triggered = false;
-                else {
+                else{
                     current_speech.start = next_start;
                 }
                 prev_end = 0;
@@ -441,7 +435,7 @@ private:
                 temp_end = 0;
 
             }
-            else {
+            else{ 
                 current_speech.end = current_sample;
                 speeches.push_back(current_speech);
                 current_speech = timestamp_t();
@@ -466,7 +460,7 @@ private:
                 float speech = current_sample - window_size_samples; // minus window_size_samples to get precise start time point.
                 printf("{  silence: %.3f s (%.3f) %08d}\n", 1.0 * speech / sample_rate, speech_prob, current_sample - window_size_samples);
 #endif //__DEBUG_SPEECH_PROB___
-}
+            }
             return;
         }
 
@@ -552,7 +546,7 @@ public:
             std::cout << speeches[i].c_str() << std::endl;
 #endif //#ifdef __DEBUG_SPEECH_PROB___
             std::vector<float> slice(&input_wav[speeches[i].start], &input_wav[speeches[i].end]);
-            output_wav.insert(output_wav.end(), slice.begin(), slice.end());
+            output_wav.insert(output_wav.end(),slice.begin(),slice.end());
         }
     };
 
@@ -606,27 +600,26 @@ private:
     // Inputs
     std::vector<Ort::Value> ort_inputs;
 
-    std::vector<const char*> input_node_names = { "input", "sr", "h", "c" };
+    std::vector<const char *> input_node_names = {"input", "state", "sr"};
     std::vector<float> input;
+    unsigned int size_state = 2 * 1 * 128; // It's FIXED.
+    std::vector<float> _state;
     std::vector<int64_t> sr;
-    unsigned int size_hc = 2 * 1 * 64; // It's FIXED.
-    std::vector<float> _h;
-    std::vector<float> _c;
 
     int64_t input_node_dims[2] = {};
-    const int64_t sr_node_dims[1] = { 1 };
-    const int64_t hc_node_dims[3] = { 2, 1, 64 };
+    const int64_t state_node_dims[3] = {2, 1, 128}; 
+    const int64_t sr_node_dims[1] = {1};
 
     // Outputs
     std::vector<Ort::Value> ort_outputs;
-    std::vector<const char*> output_node_names = { "output", "hn", "cn" };
+    std::vector<const char *> output_node_names = {"output", "stateN"};
 
 public:
     // Construction
     VadIterator(const std::wstring ModelPath,
-        int Sample_rate = 16000, int windows_frame_size = 64,
+        int Sample_rate = 16000, int windows_frame_size = 32,
         float Threshold = 0.5, int min_silence_duration_ms = 0,
-        int speech_pad_ms = 64, int min_speech_duration_ms = 64,
+        int speech_pad_ms = 32, int min_speech_duration_ms = 32,
         float max_speech_duration_s = std::numeric_limits<float>::infinity())
     {
         init_onnx_model(ModelPath);
@@ -652,8 +645,7 @@ public:
         input_node_dims[0] = 1;
         input_node_dims[1] = window_size_samples;
 
-        _h.resize(size_hc);
-        _c.resize(size_hc);
+        _state.resize(size_state);
         sr.resize(1);
         sr[0] = sample_rate;
     };
