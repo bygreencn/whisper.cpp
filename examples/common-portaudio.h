@@ -350,7 +350,7 @@ private:
     void reset_states()
     {
         // Call reset before each audio start
-        std::memset(_state.data(), 0.0f, _state.size() * sizeof(float));
+        std::memset(_state.data(), 0, _state.size() * sizeof(float));
         triggered = false;
         temp_end = 0;
         current_sample = 0;
@@ -715,7 +715,7 @@ class AudioBuffer : public CircularQueue<T>
 				cout << "AudioBuffer::srcState was NULL!" << endl;
 			}
 
-			resample_outputBuffer = (float *)std::malloc(INPUT_SAMPLE_RATE*2*sizeof(float));
+			resample_outputBuffer = (float *)std::malloc((size_t)INPUT_SAMPLE_RATE*2*sizeof(float));
 			if( resample_outputBuffer == NULL )
 			{
 				cout << "AudioBuffer::resample_outputBuffer was NULL!" << endl;
@@ -844,11 +844,27 @@ class AudioBuffer : public CircularQueue<T>
 			return paContinue;
 		};
 
+        inline std::tm localtime_xp(std::time_t timer)
+        {
+            std::tm bt{};
+#if defined(__unix__)
+            localtime_r(&timer, &bt);
+#elif defined(_MSC_VER)
+            localtime_s(&bt, &timer);
+#else
+            static std::mutex mtx;
+            std::lock_guard<std::mutex> lock(mtx);
+            bt = *std::localtime(&timer);
+#endif
+            return bt;
+        }
+
         void setSaveAudioFlag(uint8_t save_audio)
         {
-            time_t now = time(0);
+            auto now = localtime_xp(std::time(0));
             char buffer[80];
-            strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", localtime(&now));
+  
+            strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", &now);
 
             m_un8SaveAudioFlag = save_audio;
             if(m_un8SaveAudioFlag & SAVE_AUDIO_RAW)
