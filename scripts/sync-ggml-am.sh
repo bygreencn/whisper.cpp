@@ -65,12 +65,6 @@ while read c; do
         examples/common.cpp \
         examples/common-ggml.h \
         examples/common-ggml.cpp \
-        examples/whisper/grammar-parser.h \
-        examples/whisper/grammar-parser.cpp \
-        examples/whisper/whisper.h \
-        examples/whisper/whisper.cpp \
-        examples/whisper/main.cpp \
-        examples/whisper/quantize.cpp \
         LICENSE \
         scripts/gen-authors.sh \
         >> $SRC_WHISPER/ggml-src.patch
@@ -102,6 +96,8 @@ if [ -f $SRC_WHISPER/ggml-src.patch ]; then
     # src/ggml-alloc.c            -> ggml-alloc.c
     # src/ggml-backend-impl.h     -> ggml-backend-impl.h
     # src/ggml-backend.c          -> ggml-backend.c
+    # src/ggml-blas.cpp           -> ggml-blas.cpp
+    # src/ggml-blas.h             -> ggml-blas.h
     # src/ggml-common.h           -> ggml-common.h
     # src/ggml-cuda/*             -> ggml-cuda/
     # src/ggml-cuda.cu            -> ggml-cuda.cu
@@ -111,12 +107,11 @@ if [ -f $SRC_WHISPER/ggml-src.patch ]; then
     # src/ggml-kompute.h          -> ggml-kompute.h
     # src/ggml-metal.h            -> ggml-metal.h
     # src/ggml-metal.m            -> ggml-metal.m
-    # src/ggml-mpi.h              -> ggml-mpi.h
-    # src/ggml-mpi.c              -> ggml-mpi.c
-    # src/ggml-opencl.cpp         -> ggml-opencl.cpp
-    # src/ggml-opencl.h           -> ggml-opencl.h
     # src/ggml-quants.c           -> ggml-quants.c
     # src/ggml-quants.h           -> ggml-quants.h
+    # src/ggml-rpc.cpp            -> ggml-rpc.cpp
+    # src/ggml-rpc.h              -> ggml-rpc.h
+    # src/ggml-sycl/*             -> ggml-sycl/
     # src/ggml-sycl.cpp           -> ggml-sycl.cpp
     # src/ggml-sycl.h             -> ggml-sycl.h
     # src/ggml-vulkan.cpp         -> ggml-vulkan.cpp
@@ -129,13 +124,6 @@ if [ -f $SRC_WHISPER/ggml-src.patch ]; then
     # examples/common.cpp                 -> examples/common.cpp
     # examples/common-ggml.h              -> examples/common-ggml.h
     # examples/common-ggml.cpp            -> examples/common-ggml.cpp
-    # examples/whisper/grammar-parser.h   -> examples/grammar-parser.h
-    # examples/whisper/grammar-parser.cpp -> examples/grammar-parser.cpp
-    #
-    # examples/whisper/whisper.h    -> whisper.h
-    # examples/whisper/whisper.cpp  -> whisper.cpp
-    # examples/whisper/main.cpp     -> examples/main/main.cpp
-    # examples/whisper/quantize.cpp -> examples/quantize/quantize.cpp
     #
     # LICENSE                     -> LICENSE
     # ggml/scripts/gen-authors.sh -> scripts/gen-authors.sh
@@ -145,6 +133,8 @@ if [ -f $SRC_WHISPER/ggml-src.patch ]; then
         -e 's/src\/ggml-alloc\.c/ggml-alloc.c/g' \
         -e 's/src\/ggml-backend-impl\.h/ggml-backend-impl.h/g' \
         -e 's/src\/ggml-backend\.c/ggml-backend.c/g' \
+        -e 's/src\/ggml-blas\.cpp/ggml-blas.cpp/g' \
+        -e 's/src\/ggml-blas\.h/ggml-blas.h/g' \
         -e 's/src\/ggml-common\.h/ggml-common.h/g' \
         -e 's/src\/ggml-cuda\//ggml-cuda\//g' \
         -e 's/src\/ggml-cuda\.cu/ggml-cuda.cu/g' \
@@ -154,12 +144,11 @@ if [ -f $SRC_WHISPER/ggml-src.patch ]; then
         -e 's/src\/ggml-kompute\.h/ggml-kompute.h/g' \
         -e 's/src\/ggml-metal\.h/ggml-metal.h/g' \
         -e 's/src\/ggml-metal\.m/ggml-metal.m/g' \
-        -e 's/src\/ggml-mpi\.h/ggml-mpi.h/g' \
-        -e 's/src\/ggml-mpi\.c/ggml-mpi.c/g' \
-        -e 's/src\/ggml-opencl\.cpp/ggml-opencl.cpp/g' \
-        -e 's/src\/ggml-opencl\.h/ggml-opencl.h/g' \
         -e 's/src\/ggml-quants\.c/ggml-quants.c/g' \
         -e 's/src\/ggml-quants\.h/ggml-quants.h/g' \
+        -e 's/src\/ggml-rpc\.cpp/ggml-rpc.cpp/g' \
+        -e 's/src\/ggml-rpc\.h/ggml-rpc.h/g' \
+        -e 's/src\/ggml-sycl\//ggml-sycl\//g' \
         -e 's/src\/ggml-sycl\.cpp/ggml-sycl.cpp/g' \
         -e 's/src\/ggml-sycl\.h/ggml-sycl.h/g' \
         -e 's/src\/ggml-vulkan\.cpp/ggml-vulkan.cpp/g' \
@@ -171,12 +160,6 @@ if [ -f $SRC_WHISPER/ggml-src.patch ]; then
         -e 's/examples\/common\.cpp/examples\/common.cpp/g' \
         -e 's/examples\/common-ggml\.h/examples\/common-ggml.h/g' \
         -e 's/examples\/common-ggml\.cpp/examples\/common-ggml.cpp/g' \
-        -e 's/examples\/whisper\/grammar-parser\.h/examples\/grammar-parser.h/g' \
-        -e 's/examples\/whisper\/grammar-parser\.cpp/examples\/grammar-parser.cpp/g' \
-        -e 's/examples\/whisper\/whisper\.h/whisper.h/g' \
-        -e 's/examples\/whisper\/whisper\.cpp/whisper.cpp/g' \
-        -e 's/examples\/whisper\/main\.cpp/examples\/main\/main.cpp/g' \
-        -e 's/examples\/whisper\/quantize\.cpp/examples\/quantize\/quantize.cpp/g' \
         -e 's/LICENSE/LICENSE/g' \
         -e 's/ggml\/scripts\/gen-authors\.sh/scripts\/gen-authors.sh/g' \
         > ggml-src.patch.tmp

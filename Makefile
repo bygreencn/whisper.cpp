@@ -35,6 +35,8 @@ CXXV := $(shell $(CXX) --version | head -n 1)
 # Mac OS + Arm can report x86_64
 # ref: https://github.com/ggerganov/whisper.cpp/issues/66#issuecomment-1282546789
 ifeq ($(UNAME_S),Darwin)
+	WHISPER_NO_OPENMP := 1
+
 	ifneq ($(UNAME_P),arm)
 		SYSCTL_M := $(shell sysctl -n hw.optional.arm64)
 		ifeq ($(SYSCTL_M),1)
@@ -222,10 +224,14 @@ endif
 ifndef WHISPER_NO_ACCELERATE
 	# Mac M1 - include Accelerate framework
 	ifeq ($(UNAME_S),Darwin)
-		CFLAGS  += -DGGML_USE_ACCELERATE
-		CFLAGS  += -DACCELERATE_NEW_LAPACK
-		CFLAGS  += -DACCELERATE_LAPACK_ILP64
-		LDFLAGS += -framework Accelerate
+		CFLAGS      += -DGGML_USE_ACCELERATE -DGGML_USE_BLAS
+		CFLAGS      += -DACCELERATE_NEW_LAPACK
+		CFLAGS      += -DACCELERATE_LAPACK_ILP64
+		CXXFLAGS    += -DGGML_USE_ACCELERATE -DGGML_USE_BLAS
+		CXXFLAGS    += -DACCELERATE_NEW_LAPACK
+		CXXFLAGS    += -DACCELERATE_LAPACK_ILP64
+		LDFLAGS     += -framework Accelerate
+		WHISPER_OBJ += ggml-blas.o
 	endif
 endif
 
@@ -248,34 +254,46 @@ ifndef WHISPER_NO_METAL
 	endif
 endif
 
-ifneq ($(filter-out 0,$(WHISPER_OPENBLAS)),) # OpenBLAS
-	WHISPER_OPENBLAS_INTERFACE64 ?= 0 # use 32-bit interface by default
-	ifneq ($(filter-out 0,$(WHISPER_OPENBLAS_INTERFACE64)),)
-		WHISPER_BLAS_LIB := openblas64
-	else
-		WHISPER_BLAS_LIB := openblas
-	endif
-	ifneq ($(OPENBLAS_PATH),)
-		WHISPER_BLAS_CFLAGS  := -I$(OPENBLAS_PATH)/include
-		WHISPER_BLAS_LDFLAGS := -L$(OPENBLAS_PATH)/lib -l$(WHISPER_BLAS_LIB)
-	else
-		WHISPER_BLAS_LIB_PC_EXISTS := $(shell pkg-config --exists $(WHISPER_BLAS_LIB) && echo 1)
-		ifneq ($(filter-out 0,$(WHISPER_BLAS_LIB_PC_EXISTS)),)
-			WHISPER_BLAS_CFLAGS  := $(shell pkg-config --cflags $(WHISPER_BLAS_LIB))
-			WHISPER_BLAS_LDFLAGS := $(shell pkg-config --libs   $(WHISPER_BLAS_LIB))
-		else
-			WHISPER_BLAS_CFLAGS  := -I/usr/include/openblas
-			WHISPER_BLAS_LDFLAGS := -l$(WHISPER_BLAS_LIB)
-		endif
-	endif
-	CFLAGS  += $(WHISPER_BLAS_CFLAGS) -DGGML_USE_OPENBLAS
-	LDFLAGS += $(WHISPER_BLAS_LDFLAGS)
-endif
+ifndef WHISPER_NO_OPENMP
+	CXXFLAGS += -DGGML_USE_OPENMP
+	CFLAGS   += -fopenmp
+	CXXFLAGS += -fopenmp
+endif # WHISPER_NO_OPENMP
+
+ifdef WHISPER_OPENBLAS
+	CXXFLAGS    += -DGGML_USE_BLAS $(shell pkg-config --cflags-only-I openblas)
+	CFLAGS      += $(shell pkg-config --cflags-only-other openblas)
+	LDFLAGS     += $(shell pkg-config --libs openblas)
+	WHISPER_OBJ += ggml-blas.o
+endif # WHISPER_OPENBLAS
+
+ifdef WHISPER_OPENBLAS64
+	CXXFLAGS    += -DGGML_USE_BLAS $(shell pkg-config --cflags-only-I openblas64)
+	CFLAGS      += $(shell pkg-config --cflags-only-other openblas64)
+	LDFLAGS     += $(shell pkg-config --libs openblas64)
+	WHISPER_OBJ += ggml-blas.o
+endif # WHISPER_OPENBLAS64
+
+ifdef WHISPER_BLIS
+	CXXFLAGS    += -DGGML_USE_BLAS -I/usr/local/include/blis -I/usr/include/blis
+	LDFLAGS     += -lblis -L/usr/local/lib
+	WHISPER_OBJ += ggml-blas.o
+endif # WHISPER_BLIS
 
 ifdef WHISPER_CUBLAS
 # WHISPER_CUBLAS is deprecated and will be removed in the future
 	WHISPER_CUDA := 1
 endif
+
+OBJS_CUDA_TEMP_INST      = $(patsubst %.cu,%.o,$(wildcard ggml-cuda/template-instances/fattn-wmma*.cu))
+OBJS_CUDA_TEMP_INST     += $(patsubst %.cu,%.o,$(wildcard ggml-cuda/template-instances/mmq*.cu))
+ifdef WHISPER_CUDA_FA_ALL_QUANTS
+	OBJS_CUDA_TEMP_INST += $(patsubst %.cu,%.o,$(wildcard ggml-cuda/template-instances/fattn-vec*.cu))
+else
+	OBJS_CUDA_TEMP_INST += $(patsubst %.cu,%.o,$(wildcard ggml-cuda/template-instances/fattn-vec*q4_0-q4_0.cu))
+	OBJS_CUDA_TEMP_INST += $(patsubst %.cu,%.o,$(wildcard ggml-cuda/template-instances/fattn-vec*q8_0-q8_0.cu))
+	OBJS_CUDA_TEMP_INST += $(patsubst %.cu,%.o,$(wildcard ggml-cuda/template-instances/fattn-vec*f16-f16.cu))
+endif # WHISPER_CUDA_FA_ALL_QUANTS
 
 ifdef WHISPER_CUDA
 	ifeq ($(shell expr $(NVCC_VERSION) \>= 11.6), 1)
@@ -285,17 +303,21 @@ ifdef WHISPER_CUDA
 	endif
 
 	CFLAGS      += -DGGML_USE_CUDA -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/$(UNAME_M)-linux/include
-	CXXFLAGS    += -DGGML_USE_CUDA -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/$(UNAME_M)-linux/include
-	LDFLAGS     += -lcuda -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L$(CUDA_PATH)/targets/$(UNAME_M)-linux/lib -L/usr/lib/wsl/lib
-	WHISPER_OBJ += ggml-cuda.o
+	CXXFLAGS    += -DGGML_USE_CUDA -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/$(UNAME_M)-linux/include -DGGML_CUDA_USE_GRAPHS
+	LDFLAGS     += -lcuda -lcublas -lculibos -lcudart -lcublasLt -lcufft -lpthread -ldl -lrt -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L$(CUDA_PATH)/targets/$(UNAME_M)-linux/lib -L/usr/lib/wsl/lib
+	WHISPER_OBJ += ggml-cuda.o whisper-mel-cuda.o
 	WHISPER_OBJ += $(patsubst %.cu,%.o,$(wildcard ggml-cuda/*.cu))
+	WHISPER_OBJ += $(OBJS_CUDA_TEMP_INST)
 	NVCC        = nvcc
 	NVCCFLAGS   = --forward-unknown-to-host-compiler -arch=$(CUDA_ARCH_FLAG)
 
-ggml-cuda/%.o: ggml-cuda/%.cu ggml-cuda/%.cuh ggml.h ggml-common.h ggml-cuda/common.cuh
+ggml-cuda/%.o: ggml-cuda/%.cu ggml.h ggml-common.h ggml-cuda/common.cuh
 	$(NVCC) $(NVCCFLAGS) $(CXXFLAGS) -c $< -o $@
 
 ggml-cuda.o: ggml-cuda.cu ggml-cuda.h ggml.h ggml-backend.h ggml-backend-impl.h ggml-common.h $(wildcard ggml-cuda/*.cuh)
+	$(NVCC) $(NVCCFLAGS) $(CXXFLAGS) -Wno-pedantic -c $< -o $@
+
+whisper-mel-cuda.o: whisper-mel-cuda.cu whisper.h ggml.h ggml-backend.h whisper-mel.hpp whisper-mel-cuda.hpp
 	$(NVCC) $(NVCCFLAGS) $(CXXFLAGS) -Wno-pedantic -c $< -o $@
 endif
 
@@ -310,27 +332,13 @@ ifdef WHISPER_HIPBLAS
 	HIPFLAGS    += $(addprefix --offload-arch=,$(GPU_TARGETS))
 	WHISPER_OBJ += ggml-cuda.o
 	WHISPER_OBJ += $(patsubst %.cu,%.o,$(wildcard ggml-cuda/*.cu))
+	WHISPER_OBJ += $(OBJS_CUDA_TEMP_INST)
 
 ggml-cuda/%.o: ggml-cuda/%.cu ggml-cuda/%.cuh ggml.h ggml-common.h ggml-cuda/common.cuh
 	$(HIPCC) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
 
 ggml-cuda.o: ggml-cuda.cu ggml-cuda.h ggml.h ggml-backend.h ggml-backend-impl.h ggml-common.h $(wildcard ggml-cuda/*.cuh)
 	$(HIPCC) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
-endif
-
-ifdef WHISPER_CLBLAST
-	CFLAGS 		+= -DGGML_USE_CLBLAST
-	CXXFLAGS 	+= -DGGML_USE_CLBLAST
-	LDFLAGS	 	+= -lclblast
-	ifeq ($(UNAME_S),Darwin)
-		LDFLAGS	 	+= -framework OpenCL
-	else
-		LDFLAGS	    += -lOpenCL
-	endif
-	WHISPER_OBJ	+= ggml-opencl.o
-
-ggml-opencl.o: ggml-opencl.cpp ggml-opencl.h
-	$(CXX) $(CXXFLAGS) -c $< -o $@
 endif
 
 ifdef WHISPER_GPROF
@@ -402,9 +410,12 @@ ggml-backend.o: ggml-backend.c ggml.h ggml-backend.h
 ggml-quants.o: ggml-quants.c ggml.h ggml-quants.h
 	$(CC)  $(CFLAGS)   -c $< -o $@
 
+ggml-blas.o: ggml-blas.cpp ggml-blas.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 WHISPER_OBJ += ggml.o ggml-alloc.o ggml-backend.o ggml-quants.o
 
-whisper.o: whisper.cpp whisper.h ggml.h ggml-cuda.h
+whisper.o: whisper.cpp whisper.h whisper-mel.hpp ggml.h ggml-cuda.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 ifndef WHISPER_COREML
@@ -454,6 +465,8 @@ libwhisper.so: $(WHISPER_OBJ)
 
 clean:
 	rm -f *.o main stream command talk talk-llama bench quantize server lsp libwhisper.a libwhisper.so
+	rm -vrf ggml-cuda/*.o
+	rm -vrf ggml-cuda/template-instances/*.o
 
 #
 # Examples

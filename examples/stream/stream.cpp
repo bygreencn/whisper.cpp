@@ -27,7 +27,6 @@ struct whisper_params {
     float vad_thold    = 0.6f;
     float freq_thold   = 100.0f;
 
-    bool speed_up      = false;
     bool translate     = false;
     bool no_fallback   = false;
     bool print_special = false;
@@ -36,6 +35,7 @@ struct whisper_params {
     bool tinydiarize   = false;
     bool save_audio    = false; // save audio to wav file
     bool use_gpu       = true;
+    bool flash_attn    = false;
 
     std::string language  = "en";
     std::string model     = "models/ggml-base.en.bin";
@@ -61,7 +61,6 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-ac"   || arg == "--audio-ctx")     { params.audio_ctx     = std::stoi(argv[++i]); }
         else if (arg == "-vth"  || arg == "--vad-thold")     { params.vad_thold     = std::stof(argv[++i]); }
         else if (arg == "-fth"  || arg == "--freq-thold")    { params.freq_thold    = std::stof(argv[++i]); }
-        else if (arg == "-su"   || arg == "--speed-up")      { params.speed_up      = true; }
         else if (arg == "-tr"   || arg == "--translate")     { params.translate     = true; }
         else if (arg == "-nf"   || arg == "--no-fallback")   { params.no_fallback   = true; }
         else if (arg == "-ps"   || arg == "--print-special") { params.print_special = true; }
@@ -72,6 +71,7 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-tdrz" || arg == "--tinydiarize")   { params.tinydiarize   = true; }
         else if (arg == "-sa"   || arg == "--save-audio")    { params.save_audio    = true; }
         else if (arg == "-ng"   || arg == "--no-gpu")        { params.use_gpu       = false; }
+        else if (arg == "-fa"   || arg == "--flash-attn")    { params.flash_attn    = true; }
 
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
@@ -98,7 +98,6 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -ac N,    --audio-ctx N   [%-7d] audio context size (0 - all)\n",                   params.audio_ctx);
     fprintf(stderr, "  -vth N,   --vad-thold N   [%-7.2f] voice activity detection threshold\n",           params.vad_thold);
     fprintf(stderr, "  -fth N,   --freq-thold N  [%-7.2f] high-pass frequency cutoff\n",                   params.freq_thold);
-    fprintf(stderr, "  -su,      --speed-up      [%-7s] speed up audio by x2 (reduced accuracy)\n",        params.speed_up ? "true" : "false");
     fprintf(stderr, "  -tr,      --translate     [%-7s] translate from source language to english\n",      params.translate ? "true" : "false");
     fprintf(stderr, "  -nf,      --no-fallback   [%-7s] do not use temperature fallback while decoding\n", params.no_fallback ? "true" : "false");
     fprintf(stderr, "  -ps,      --print-special [%-7s] print special tokens\n",                           params.print_special ? "true" : "false");
@@ -109,6 +108,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -tdrz,    --tinydiarize   [%-7s] enable tinydiarize (requires a tdrz model)\n",     params.tinydiarize ? "true" : "false");
     fprintf(stderr, "  -sa,      --save-audio    [%-7s] save the recorded audio to a file\n",              params.save_audio ? "true" : "false");
     fprintf(stderr, "  -ng,      --no-gpu        [%-7s] disable GPU inference\n",                          params.use_gpu ? "false" : "true");
+    fprintf(stderr, "  -fa,      --flash-attn    [%-7s] flash attention during inference\n",               params.flash_attn ? "true" : "false");
     fprintf(stderr, "\n");
 }
 
@@ -153,7 +153,9 @@ int main(int argc, char ** argv) {
     }
 
     struct whisper_context_params cparams = whisper_context_default_params();
-    cparams.use_gpu = params.use_gpu;
+
+    cparams.use_gpu    = params.use_gpu;
+    cparams.flash_attn = params.flash_attn;
 
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
 
@@ -309,7 +311,6 @@ int main(int argc, char ** argv) {
             wparams.n_threads        = params.n_threads;
 
             wparams.audio_ctx        = params.audio_ctx;
-            wparams.speed_up         = params.speed_up;
 
             wparams.tdrz_enable      = params.tinydiarize; // [TDRZ]
 

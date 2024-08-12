@@ -4,9 +4,10 @@
 
 [![Actions Status](https://github.com/ggerganov/whisper.cpp/workflows/CI/badge.svg)](https://github.com/ggerganov/whisper.cpp/actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Conan Center](https://shields.io/conan/v/whisper-cpp)](https://conan.io/center/whisper-cpp)
 [![npm](https://img.shields.io/npm/v/whisper.cpp.svg)](https://www.npmjs.com/package/whisper.cpp/)
 
-Stable: [v1.5.5](https://github.com/ggerganov/whisper.cpp/releases/tag/v1.5.5) / [Roadmap | F.A.Q.](https://github.com/ggerganov/whisper.cpp/discussions/126)
+Stable: [v1.6.2](https://github.com/ggerganov/whisper.cpp/releases/tag/v1.6.0) / [Roadmap | F.A.Q.](https://github.com/ggerganov/whisper.cpp/discussions/126)
 
 High-performance inference of [OpenAI's Whisper](https://github.com/openai/whisper) automatic speech recognition (ASR) model:
 
@@ -19,7 +20,6 @@ High-performance inference of [OpenAI's Whisper](https://github.com/openai/whisp
 - Zero memory allocations at runtime
 - Support for CPU-only inference
 - [Efficient GPU support for NVIDIA](https://github.com/ggerganov/whisper.cpp#nvidia-gpu-support-via-cublas)
-- [Partial OpenCL GPU support via CLBlast](https://github.com/ggerganov/whisper.cpp#opencl-gpu-support-via-clblast)
 - [OpenVINO Support](https://github.com/ggerganov/whisper.cpp#openvino-support)
 - [C-style API](https://github.com/ggerganov/whisper.cpp/blob/master/whisper.h)
 
@@ -421,28 +421,6 @@ make clean
 WHISPER_CUDA=1 make -j
 ```
 
-## OpenCL GPU support via CLBlast
-
-For cards and integrated GPUs that support OpenCL, the Encoder processing can be largely offloaded to the GPU through CLBlast. This is especially useful for users with AMD APUs or low end devices for up to ~2x speedup.
-
-First, make sure you have installed `CLBlast` for your OS or Distribution: https://github.com/CNugteren/CLBlast
-
-Now build `whisper.cpp` with CLBlast support:
-
-```
-Makefile:
-cd whisper.cpp
-make clean
-WHISPER_CLBLAST=1 make -j
-
-CMake:
-cd whisper.cpp
-cmake -B build -DWHISPER_CLBLAST=ON
-cmake --build build -j --config Release
-```
-
-Run all the examples as usual.
-
 ## BLAS CPU support via OpenBLAS
 
 Encoder processing can be accelerated on the CPU via OpenBLAS.
@@ -501,6 +479,16 @@ docker run -it --rm \
   -v path/to/models:/models \
   whisper.cpp:main "./main -m /models/ggml-base.bin -f ./samples/jfk.wav"
 ```
+
+## Installing with Conan
+
+You can install pre-built binaries for whisper.cpp or build it from source using [Conan](https://conan.io/). Use the following command:
+
+```
+conan install --requires="whisper-cpp/[*]" --build=missing
+```
+
+For detailed instructions on how to use Conan, please refer to the [Conan documentation](https://docs.conan.io/2/).
 
 ## Limitations
 
@@ -710,7 +698,7 @@ The [main](examples/main) example provides support for output of karaoke-style m
 currently pronounced word is highlighted. Use the `-wts` argument and run the generated bash script.
 This requires to have `ffmpeg` installed.
 
-Here are a few *"typical"* examples:
+Here are a few _"typical"_ examples:
 
 ```bash
 ./main -m ./models/ggml-base.en.bin -f ./samples/jfk.wav -owts

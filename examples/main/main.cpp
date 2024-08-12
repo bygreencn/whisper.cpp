@@ -47,7 +47,6 @@ struct whisper_params {
     float temperature     = 0.0f;
     float temperature_inc = 0.2f;
 
-    bool speed_up        = false;
     bool debug_mode      = false;
     bool translate       = false;
     bool detect_language = false;
@@ -70,6 +69,7 @@ struct whisper_params {
     bool no_timestamps   = false;
     bool log_score       = false;
     bool use_gpu         = true;
+    bool flash_attn      = false;
 
     std::string language  = "en";
     std::string prompt;
@@ -137,7 +137,6 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-lpt"  || arg == "--logprob-thold")   { params.logprob_thold   = std::stof(argv[++i]); }
         else if (arg == "-tp"   || arg == "--temperature")     { params.temperature     = std::stof(argv[++i]); }
         else if (arg == "-tpi"  || arg == "--temperature-inc") { params.temperature_inc = std::stof(argv[++i]); }
-        // else if (arg == "-su"   || arg == "--speed-up")        { params.speed_up        = true; }
         else if (arg == "-debug"|| arg == "--debug-mode")      { params.debug_mode      = true; }
         else if (arg == "-tr"   || arg == "--translate")       { params.translate       = true; }
         else if (arg == "-di"   || arg == "--diarize")         { params.diarize         = true; }
@@ -168,7 +167,8 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-dtw"  || arg == "--dtw")             { params.dtw             = argv[++i]; }
         else if (arg == "-ls"   || arg == "--log-score")       { params.log_score       = true; }
         else if (arg == "-ng"   || arg == "--no-gpu")          { params.use_gpu         = false; }
-        else if (                  arg == "--suppress-regex")  { params.suppress_regex = argv[++i]; }
+        else if (arg == "-fa"   || arg == "--flash-attn")      { params.flash_attn      = true; }
+        else if (                  arg == "--suppress-regex")  { params.suppress_regex  = argv[++i]; }
         else if (                  arg == "--grammar")         { params.grammar         = argv[++i]; }
         else if (                  arg == "--grammar-rule")    { params.grammar_rule    = argv[++i]; }
         else if (                  arg == "--grammar-penalty") { params.grammar_penalty = std::stof(argv[++i]); }
@@ -204,7 +204,6 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -lpt N,    --logprob-thold N   [%-7.2f] log probability threshold for decoder fail\n",   params.logprob_thold);
     fprintf(stderr, "  -tp,       --temperature N     [%-7.2f] The sampling temperature, between 0 and 1\n",    params.temperature);
     fprintf(stderr, "  -tpi,      --temperature-inc N [%-7.2f] The increment of temperature, between 0 and 1\n",params.temperature_inc);
-    // fprintf(stderr, "  -su,       --speed-up          [%-7s] speed up audio by x2 (reduced accuracy)\n",        params.speed_up ? "true" : "false");
     fprintf(stderr, "  -debug,    --debug-mode        [%-7s] enable debug mode (eg. dump log_mel)\n",           params.debug_mode ? "true" : "false");
     fprintf(stderr, "  -tr,       --translate         [%-7s] translate from source language to english\n",      params.translate ? "true" : "false");
     fprintf(stderr, "  -di,       --diarize           [%-7s] stereo audio diarization\n",                       params.diarize ? "true" : "false");
@@ -234,6 +233,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -dtw MODEL --dtw MODEL         [%-7s] compute token-level timestamps\n",                 params.dtw.c_str());
     fprintf(stderr, "  -ls,       --log-score         [%-7s] log best decoder scores of tokens\n",              params.log_score?"true":"false");
     fprintf(stderr, "  -ng,       --no-gpu            [%-7s] disable GPU\n",                                    params.use_gpu ? "false" : "true");
+    fprintf(stderr, "  -fa,       --flash-attn        [%-7s] flash attention\n",                                params.flash_attn ? "true" : "false");
     fprintf(stderr, "  --suppress-regex REGEX         [%-7s] regular expression matching tokens to suppress\n", params.suppress_regex.c_str());
     fprintf(stderr, "  --grammar GRAMMAR              [%-7s] GBNF grammar to guide decoding\n",                 params.grammar.c_str());
     fprintf(stderr, "  --grammar-rule RULE            [%-7s] top-level GBNF grammar rule name\n",               params.grammar_rule.c_str());
@@ -977,7 +977,9 @@ int main(int argc, char ** argv) {
     // whisper init
 
     struct whisper_context_params cparams = whisper_context_default_params();
-    cparams.use_gpu = params.use_gpu;
+
+    cparams.use_gpu    = params.use_gpu;
+    cparams.flash_attn = params.flash_attn;
 
     if (!params.dtw.empty()) {
         cparams.dtw_token_timestamps = true;
@@ -1101,7 +1103,6 @@ int main(int argc, char ** argv) {
             wparams.split_on_word    = params.split_on_word;
             wparams.audio_ctx        = params.audio_ctx;
 
-            wparams.speed_up         = params.speed_up;
             wparams.debug_mode       = params.debug_mode;
 
             wparams.tdrz_enable      = params.tinydiarize; // [TDRZ]

@@ -3,7 +3,7 @@ cmake_minimum_required (VERSION 3.5)
 # Allow for the creation of solution folders.
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-project(whisper.cpp VERSION 1.5.5)
+project(whisper.cpp VERSION 1.6.2)
 set(SOVERSION 1)
 
 # Add path to modules
@@ -64,6 +64,10 @@ option(WHISPER_SampleRate             "whisper: support for libSampleRate" OFF)
 option(WHISPER_sndfile                "whisper: support for libsndfile" OFF)
 
 
+if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+    option(WHISPER_FFMPEG                 "whisper: support building and linking with ffmpeg libs (avcodec, swresample, ...)" OFF)
+endif()
+
 option(WHISPER_NO_AVX                 "whisper: disable AVX"         OFF)
 option(WHISPER_NO_AVX2                "whisper: disable AVX2"        OFF)
 option(WHISPER_NO_AVX512              "whisper: disable AVX512"      ON)
@@ -81,18 +85,21 @@ if (APPLE)
     option(WHISPER_COREML                "whisper: enable Core ML framework"     OFF)
     option(WHISPER_COREML_ALLOW_FALLBACK "whisper: allow non-CoreML fallback"    OFF)
     option(WHISPER_METAL_EMBED_LIBRARY   "whisper: embed Metal library"          OFF)
+    option(WHISPER_BLAS                  "whisper: use BLAS"                     ON)
+    set   (WHISPER_BLAS_VENDOR "Apple" CACHE STRING
+                                         "whisper: BLAS library vendor")
 else()
-    option(WHISPER_BLAS                  "whisper: use BLAS libraries"                        OFF)
-    option(WHISPER_BLAS_VENDOR           "whisper: BLAS library vendor"                       Generic)
-    option(WHISPER_OPENBLAS              "whisper: prefer OpenBLAS"                           OFF)
-    option(WHISPER_OPENBLAS_INTERFACE64  "whisper: use OpenBLAS w/ 64-bit interface"          OFF)
     option(WHISPER_CUDA                  "whisper: support for CUDA"                          OFF)
+    option(WHISPER_CUDA_FA_ALL_QUANTS    "whisper: compile all quants for FlashAttention"     OFF)
     option(WHISPER_CUBLAS                "whisper: support for CUDA (deprecated)"             OFF)
     option(WHISPER_HIPBLAS               "whisper: support for hipBLAS"                       OFF)
     option(WHISPER_CLBLAST               "whisper: use CLBlast"                               OFF)
     option(WHISPER_MKL                   "whisper: use Intel Math Kernel Library (MKL)"       OFF)
     option(WHISPER_SYCL                  "whisper: use SYCL"                                  OFF)
     option(WHISPER_SYCL_F16              "whisper: use 16 bit floats for sycl calculations"   OFF)
+    option(WHISPER_BLAS                  "whisper: use BLAS"                                  OFF)
+    set   (WHISPER_BLAS_VENDOR "Generic" CACHE STRING
+                                         "whisper: BLAS library vendor")
 endif()
 
 option(WHISPER_PERF "whisper: enable perf timings" OFF)
@@ -128,6 +135,26 @@ if (WHISPER_SYCL)
     set(CMAKE_CXX_STANDARD 17)
 else()
     set(CMAKE_CXX_STANDARD 11)
+endif()
+
+if (WHISPER_FFMPEG)
+    # As of cmake 3.27, there is no official cmake support for FindFFmpeg.
+    # Consequnelty we added a FindFFmpeg.cmake script the cmake subfolder:
+    # whisper.cpp does not need the full ffmpeg libs, just AVFORMAT AVCODEC AVUTIL SWRESAMPLE
+    # libswresample  performs highly optimized audio resampling, rematrixing and sample format conversion operations
+    # libavcodec provides a generic encoding/decoding framework and contains multiple decoders and encoders for audio, video and subtitle streams, and several bitstream filters.
+    # libavformat provides a generic framework for multiplexing and demultiplexing (muxing and demuxing) audio, video and subtitle streams.
+    find_package(FFmpeg REQUIRED)
+    if (NOT ${FFMPEG_FOUND})
+        message(FATAL_ERROR "Cannot find ffmpeg libs/headers")
+    endif()
+    message(STATUS "Found ffmpeg libs: ${FFMPEG_LIBRARIES}")
+    message(STATUS "Found ffmpeg headers in: ${FFMPEG_INCLUDE_DIRS}")
+    message(STATUS "ffmpeg definitions: ${FFMPEG_DEFINITIONS}")
+    message(STATUS "Found avformat ${AVFORMAT_VERSION}")
+    include_directories(${FFMPEG_INCLUDE_DIRS})
+    add_compile_definitions(WHISPER_FFMPEG)
+    set(WHISPER_EXTRA_LIBS  ${WHISPER_EXTRA_LIBS} ${FFMPEG_LIBRARIES})
 endif()
 
 # on APPLE
@@ -226,93 +253,90 @@ if (APPLE)
     endif()
 endif()
 
-if (WHISPER_OPENBLAS)
-    set(WHISPER_BLAS_VENDOR "OpenBLAS")
-    set(WHISPER_BLAS ON)
-    # BLA_PKGCONFIG_BLAS is supported since CMake 3.25.
-    # FindBLAS.cmake pkg-config logic seems incomplete, because when
-    # BLA_SIZEOF_INTEGER is 8, then it should search for blas64 instead of blas.
-    # blas.pc/blas64.pc are not always provided, so let's be more specific
-    # and go with openblas.pc/openblas64.pc if WHISPER_OPENBLAS is on.
-    if (WHISPER_OPENBLAS_INTERFACE64)
-        set(WHISPER_BLAS_LIB "openblas64")
-    else ()
-        set(WHISPER_BLAS_LIB "openblas")
-    endif ()
-    set(BLA_PKGCONFIG_BLAS ${WHISPER_BLAS_LIB})
-    # OpenBLAS prebuilt libraries for Windows do not have "64" suffix in filename.
-    # (But .pc file has "64" suffix in filename for USE_64BITINT=1 Windows build.)
-    if (MSVC)
-        set(WHISPER_BLAS_LIB "openblas")
-    endif ()
-endif()
-
 if (WHISPER_BLAS)
-    if (NOT "$ENV{OPENBLAS_PATH}" STREQUAL "")
-        if (WHISPER_STATIC)
-            set(WHISPER_BLAS_LIB_PREFIX ${CMAKE_STATIC_LIBRARY_PREFIX})
-            set(WHISPER_BLAS_LIB_SUFFIX ${CMAKE_STATIC_LIBRARY_SUFFIX})
-        else ()
-            if (CMAKE_IMPORT_LIBRARY_SUFFIX)
-                set(WHISPER_BLAS_LIB_PREFIX ${CMAKE_IMPORT_LIBRARY_PREFIX})
-                set(WHISPER_BLAS_LIB_SUFFIX ${CMAKE_IMPORT_LIBRARY_SUFFIX})
-            else ()
-                set(WHISPER_BLAS_LIB_PREFIX ${CMAKE_SHARED_LIBRARY_PREFIX})
-                set(WHISPER_BLAS_LIB_SUFFIX ${CMAKE_SHARED_LIBRARY_SUFFIX})
-            endif ()
-        endif ()
-        # OpenBLAS prebuilt libraries hardcode "lib" prefix in filename even on Windows
-        if (WHISPER_OPENBLAS)
-            set(WHISPER_BLAS_LIB_PREFIX "lib")
-        endif ()
-        message(STATUS "BLAS compatible library path provided")
-        set(BLAS_LIBRARIES "$ENV{OPENBLAS_PATH}/lib/${WHISPER_BLAS_LIB_PREFIX}${WHISPER_BLAS_LIB}${WHISPER_BLAS_LIB_SUFFIX}")
-        message(STATUS "Libraries ${BLAS_LIBRARIES}")
-        set(BLAS_INCLUDE_DIRS "$ENV{OPENBLAS_PATH}/include")
-        message(STATUS "Include dirs ${BLAS_INCLUDE_DIRS}")
-        if (NOT EXISTS "${BLAS_LIBRARIES}")
-            message(FATAL_ERROR "BLAS library was not found. Environment variable OPENBLAS_PATH misdefined.")
-        endif ()
-        set(WHISPER_EXTRA_FLAGS ${WHISPER_EXTRA_FLAGS} -DGGML_USE_OPENBLAS)
-        include_directories(${BLAS_INCLUDE_DIRS})
-        set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} ${BLAS_LIBRARIES})
-    else ()
-        if (WHISPER_STATIC)
-            # FindBLAS.cmake pkg-config logic seems incomplete, because when
-            # BLA_STATIC is on, then it should use pkg_check_modules_static
-            # instead of pkg_check_modules.
-            # Some manual variable overriding may be necessary if you don't
-            # achieve desired results.
-            set(BLA_STATIC 1)
-        endif ()
-        set(BLA_VENDOR ${WHISPER_BLAS_VENDOR})
-        if (WHISPER_OPENBLAS_INTERFACE64)
-            set(BLA_SIZEOF_INTEGER 8)
-        else ()
-            set(BLA_SIZEOF_INTEGER 4)
-        endif()
-        set(BLA_PREFER_PKGCONFIG 1)
-        find_package(BLAS)
+    if (WHISPER_STATIC)
+        set(BLA_STATIC ON)
+    endif()
+    #if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+    #    set(BLA_SIZEOF_INTEGER 8)
+    #endif()
 
-        if(BLAS_FOUND)
-            message(STATUS "BLAS compatible library found")
-            message(STATUS "Libraries ${BLAS_LIBRARIES}")
-            if (NOT DEFINED BLAS_INCLUDE_DIRS)
-                if (PKGC_BLAS_FOUND)
-                    set(BLAS_INCLUDE_DIRS "${PKGC_BLAS_INCLUDE_DIRS}")
-                else ()
-                    find_path(BLAS_INCLUDE_DIRS cblas.h /usr/include/openblas)
+    set(BLA_VENDOR ${WHISPER_BLAS_VENDOR})
+    find_package(BLAS)
+
+    if (BLAS_FOUND)
+        message(STATUS "BLAS found, Libraries: ${BLAS_LIBRARIES}")
+
+        if (("${BLAS_INCLUDE_DIRS}" STREQUAL "") AND NOT (${WHISPER_BLAS_VENDOR} MATCHES "Apple"))
+            # BLAS_INCLUDE_DIRS is missing in FindBLAS.cmake.
+            # see https://gitlab.kitware.com/cmake/cmake/-/issues/20268
+            find_package(PkgConfig REQUIRED)
+            if (${WHISPER_BLAS_VENDOR} MATCHES "Generic")
+                pkg_check_modules(DepBLAS REQUIRED blas)
+            elseif (${WHISPER_BLAS_VENDOR} MATCHES "OpenBLAS")
+                # As of openblas v0.3.22, the 64-bit is named openblas64.pc
+                pkg_check_modules(DepBLAS openblas64)
+                if (NOT DepBLAS_FOUND)
+                    pkg_check_modules(DepBLAS REQUIRED openblas)
+                endif()
+            elseif (${WHISPER_BLAS_VENDOR} MATCHES "FLAME")
+                pkg_check_modules(DepBLAS REQUIRED blis)
+            elseif (${WHISPER_BLAS_VENDOR} MATCHES "ATLAS")
+                pkg_check_modules(DepBLAS REQUIRED blas-atlas)
+            elseif (${WHISPER_BLAS_VENDOR} MATCHES "FlexiBLAS")
+                pkg_check_modules(DepBLAS REQUIRED flexiblas_api)
+            elseif (${WHISPER_BLAS_VENDOR} MATCHES "Intel")
+                # all Intel* libraries share the same include path
+                pkg_check_modules(DepBLAS REQUIRED mkl-sdl)
+            elseif (${WHISPER_BLAS_VENDOR} MATCHES "NVHPC")
+                # this doesn't provide pkg-config
+                # suggest to assign BLAS_INCLUDE_DIRS on your own
+                if ("${NVHPC_VERSION}" STREQUAL "")
+                    message(WARNING "Better to set NVHPC_VERSION")
+                else()
+                    set(DepBLAS_FOUND ON)
+                    set(DepBLAS_INCLUDE_DIRS "/opt/nvidia/hpc_sdk/${CMAKE_SYSTEM_NAME}_${CMAKE_SYSTEM_PROCESSOR}/${NVHPC_VERSION}/math_libs/include")
                 endif()
             endif()
-            message(STATUS "Include dirs ${BLAS_INCLUDE_DIRS}")
-            set(WHISPER_EXTRA_FLAGS ${WHISPER_EXTRA_FLAGS} -DGGML_USE_OPENBLAS)
-            include_directories(${BLAS_INCLUDE_DIRS})
-            set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} ${BLAS_LIBRARIES})
-        else()
-            message(FATAL_ERROR "BLAS library was not found")
+            if (DepBLAS_FOUND)
+                set(BLAS_INCLUDE_DIRS ${DepBLAS_INCLUDE_DIRS})
+            else()
+                message(WARNING "BLAS_INCLUDE_DIRS neither been provided nor been automatically"
+                " detected by pkgconfig, trying to find cblas.h from possible paths...")
+                find_path(BLAS_INCLUDE_DIRS
+                    NAMES cblas.h
+                    HINTS
+                        /usr/include
+                        /usr/local/include
+                        /usr/include/openblas
+                        /opt/homebrew/opt/openblas/include
+                        /usr/local/opt/openblas/include
+                        /usr/include/x86_64-linux-gnu/openblas/include
+                )
+            endif()
         endif()
-    endif ()
-endif ()
+
+        message(STATUS "BLAS found, Includes: ${BLAS_INCLUDE_DIRS}")
+
+        add_compile_options(${BLAS_LINKER_FLAGS})
+
+        add_compile_definitions(GGML_USE_BLAS)
+
+        if (${BLAS_INCLUDE_DIRS} MATCHES "mkl" AND (${WHISPER_BLAS_VENDOR} MATCHES "Generic" OR ${WHISPER_BLAS_VENDOR} MATCHES "Intel"))
+            add_compile_definitions(GGML_BLAS_USE_MKL)
+        endif()
+
+        set(GGML_HEADERS_BLAS ggml-blas.h)
+        set(GGML_SOURCES_BLAS ggml-blas.cpp)
+
+        set(WHISPER_EXTRA_LIBS     ${WHISPER_EXTRA_LIBS}     ${BLAS_LIBRARIES})
+        set(WHISPER_EXTRA_INCLUDES ${WHISPER_EXTRA_INCLUDES} ${BLAS_INCLUDE_DIRS})
+    else()
+        message(WARNING "BLAS not found, please refer to "
+        "https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors"
+        " to set correct WHISPER_BLAS_VENDOR")
+    endif()
+endif()
 
 if (WHISPER_MKL)
     find_package(MKL CONFIG REQUIRED PATHS $ENV{MKLROOT})
@@ -327,12 +351,26 @@ if (WHISPER_CUBLAS)
 endif()
 
 if (WHISPER_CUDA)
-    cmake_minimum_required(VERSION 3.17)
+    cmake_minimum_required(VERSION 3.18)  # for CMAKE_CUDA_ARCHITECTURES
 
     find_package(CUDAToolkit)
 
     if (CUDAToolkit_FOUND)
         message(STATUS "cuBLAS found")
+
+        if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+            # 52 == lowest CUDA 12 standard
+            # 60 == f16 CUDA intrinsics
+            # 61 == integer CUDA intrinsics
+            # 70 == compute capability at which unrolling a loop in mul_mat_q kernels is faster
+            if (WHISPER_CUDA_F16 OR WHISPER_CUDA_DMMV_F16)
+                set(CMAKE_CUDA_ARCHITECTURES "60;61;70") # needed for f16 CUDA intrinsics
+            else()
+                set(CMAKE_CUDA_ARCHITECTURES "52;61;70") # lowest CUDA 12 standard + lowest for integer intrinsics
+                #set(CMAKE_CUDA_ARCHITECTURES "OFF") # use this to compile much faster, but only F16 models work
+            endif()
+        endif()
+        message(STATUS "Using CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 
         enable_language(CUDA)
 
@@ -340,17 +378,36 @@ if (WHISPER_CUDA)
         list(APPEND GGML_SOURCES_CUDA  ggml-cuda.h)
         list(APPEND GGML_SOURCES_CUDA  ggml-cuda.cu)
 
+        file(GLOB SRCS "ggml-cuda/template-instances/fattn-wmma*.cu")
+        list(APPEND GGML_SOURCES_CUDA ${SRCS})
+        file(GLOB SRCS "ggml-cuda/template-instances/mmq*.cu")
+        list(APPEND GGML_SOURCES_CUDA ${SRCS})
+
+        if (WHISPER_CUDA_FA_ALL_QUANTS)
+            file(GLOB SRCS "ggml-cuda/template-instances/fattn-vec*.cu")
+            list(APPEND GGML_SOURCES_CUDA ${SRCS})
+            add_compile_definitions(GGML_CUDA_FA_ALL_QUANTS)
+        else()
+            file(GLOB SRCS "ggml-cuda/template-instances/fattn-vec*q4_0-q4_0.cu")
+            list(APPEND GGML_SOURCES_CUDA ${SRCS})
+            file(GLOB SRCS "ggml-cuda/template-instances/fattn-vec*q8_0-q8_0.cu")
+            list(APPEND GGML_SOURCES_CUDA ${SRCS})
+            file(GLOB SRCS "ggml-cuda/template-instances/fattn-vec*f16-f16.cu")
+            list(APPEND GGML_SOURCES_CUDA ${SRCS})
+        endif()
+
         add_compile_definitions(GGML_USE_CUDA)
+        add_compile_definitions(GGML_CUDA_USE_GRAPHS)
 
         if (WHISPER_STATIC)
             if (WIN32)
                 # As of 12.3.1 CUDA Tookit for Windows does not offer a static cublas library
-                set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart_static CUDA::cublas CUDA::cublasLt)
+                set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart_static CUDA::cublas CUDA::cublasLt CUDA::cufft)
             else ()
-                set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart_static CUDA::cublas_static CUDA::cublasLt_static)
+                set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart_static CUDA::cublas_static CUDA::cublasLt_static CUDA::cufft_static)
             endif()
         else()
-            set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart CUDA::cublas CUDA::cublasLt)
+            set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cudart CUDA::cublas CUDA::cublasLt CUDA::cufft)
         endif()
 
         set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} CUDA::cuda_driver)
@@ -380,6 +437,24 @@ if (WHISPER_HIPBLAS)
         file(GLOB GGML_SOURCES_ROCM "ggml-cuda/*.cu")
         list(APPEND GGML_SOURCES_ROCM "ggml-cuda.cu")
 
+        file(GLOB SRCS "ggml-cuda/template-instances/fattn-wmma*.cu")
+        list(APPEND GGML_SOURCES_CUDA ${SRCS})
+        file(GLOB SRCS "ggml-cuda/template-instances/mmq*.cu")
+        list(APPEND GGML_SOURCES_CUDA ${SRCS})
+
+        if (WHISPER_CUDA_FA_ALL_QUANTS)
+            file(GLOB SRCS "ggml-cuda/template-instances/fattn-vec*.cu")
+            list(APPEND GGML_SOURCES_CUDA ${SRCS})
+            add_compile_definitions(GGML_CUDA_FA_ALL_QUANTS)
+        else()
+            file(GLOB SRCS "ggml-cuda/template-instances/fattn-vec*q4_0-q4_0.cu")
+            list(APPEND GGML_SOURCES_CUDA ${SRCS})
+            file(GLOB SRCS "ggml-cuda/template-instances/fattn-vec*q8_0-q8_0.cu")
+            list(APPEND GGML_SOURCES_CUDA ${SRCS})
+            file(GLOB SRCS "ggml-cuda/template-instances/fattn-vec*f16-f16.cu")
+            list(APPEND GGML_SOURCES_CUDA ${SRCS})
+        endif()
+
         add_compile_definitions(GGML_USE_HIPBLAS GGML_USE_CUDA)
 
         set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE CXX)
@@ -389,21 +464,6 @@ if (WHISPER_HIPBLAS)
         set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} hip::device PUBLIC hip::host roc::rocblas roc::hipblas)
     else()
         message(FATAL_ERROR "hipBLAS or HIP not found. Try setting CMAKE_PREFIX_PATH=/opt/rocm")
-    endif()
-endif()
-
-if (WHISPER_CLBLAST)
-    find_package(CLBlast)
-    if (CLBlast_FOUND)
-        message(STATUS "CLBlast found")
-
-        set(GGML_SOURCES_OPENCL ggml-opencl.cpp ggml-opencl.h)
-
-        add_compile_definitions(GGML_USE_CLBLAST)
-
-        set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} clblast)
-    else()
-        message(FATAL_ERROR "CLBlast not found")
     endif()
 endif()
 
@@ -431,7 +491,8 @@ if (WHISPER_SYCL)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl -L${MKLROOT}/lib")
 
     set(GGML_HEADERS_SYCL ggml-sycl.h)
-    set(GGML_SOURCES_SYCL ggml-sycl.cpp)
+    file(GLOB GGML_SOURCES_SYCL "ggml-sycl/*.cpp")
+    list(APPEND GGML_SOURCES_SYCL "ggml-sycl.cpp")
 
     set(WHISPER_EXTRA_LIBS ${WHISPER_EXTRA_LIBS} sycl OpenCL mkl_core pthread m dl mkl_sycl_blas mkl_intel_ilp64 mkl_tbb_thread)
 endif()
@@ -653,12 +714,16 @@ add_library(${TARGET}
     ggml-quants.c
     ${GGML_SOURCES_METAL}
     ${GGML_SOURCES_CUDA}
-    ${GGML_SOURCES_OPENCL}
-    ${GGML_SOURCES_SYCL}        ${GGML_HEADERS_SYCL}
-    ${GGML_SOURCES_ROCM}        ${GGML_HEADERS_ROCM}
+    ${GGML_SOURCES_SYCL}  ${GGML_HEADERS_SYCL}
+    ${GGML_SOURCES_ROCM}  ${GGML_HEADERS_ROCM}
+    ${GGML_SOURCES_BLAS}  ${GGML_HEADERS_BLAS}
     whisper.h
     whisper.cpp
     )
+
+if (WHISPER_CUDA)
+    target_sources(${TARGET} PRIVATE whisper-mel-cuda.cu)
+endif()
 
 include_directories (
     .
