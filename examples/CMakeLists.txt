@@ -88,11 +88,6 @@ if (WHISPER_SDL2)
     set_target_properties(${TARGET} PROPERTIES FOLDER "libs")
 endif()
 
-<<<<<<<<< Temporary merge branch 1
-add_library(json_cpp INTERFACE)
-target_include_directories(json_cpp INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-
-
 
 # Get all propreties that cmake supports
 if(NOT CMAKE_PROPERTY_LIST)
@@ -230,7 +225,7 @@ elseif(CMAKE_JS_VERSION)
     set_target_properties(addon.node PROPERTIES FOLDER "examples")
 else()
     add_subdirectory(main)
-<<<<<<<<< Temporary merge branch 1
+
 if (WHISPER_SDL2)
     #set_target_properties(stream PROPERTIES FOLDER "examples")
 endif (WHISPER_SDL2)
@@ -249,12 +244,11 @@ if (WHISPER_SDL2)
     #set_target_properties(talk PROPERTIES FOLDER "examples")
     #set_target_properties(talk-llama PROPERTIES FOLDER "examples")
     set_target_properties(main PROPERTIES FOLDER "examples")
+endif (WHISPER_SDL2)
 if (WHISPER_SDL2)
     add_subdirectory(stream)
     set_target_properties(stream PROPERTIES FOLDER "examples")
 endif (WHISPER_SDL2)
-    add_subdirectory(stream-portaudio)
-    set_target_properties(stream-portaudio PROPERTIES FOLDER "examples")
 if (WHISPER_SDL2)
     add_subdirectory(command)
     set_target_properties(command PROPERTIES FOLDER "examples")
