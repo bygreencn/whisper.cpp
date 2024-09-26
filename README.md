@@ -21,6 +21,7 @@ High-performance inference of [OpenAI's Whisper](https://github.com/openai/whisp
 - Support for CPU-only inference
 - [Efficient GPU support for NVIDIA](https://github.com/ggerganov/whisper.cpp#nvidia-gpu-support-via-cublas)
 - [OpenVINO Support](https://github.com/ggerganov/whisper.cpp#openvino-support)
+- [Ascend NPU Support](https://github.com/ggerganov/whisper.cpp#ascend-npu-support)
 - [C-style API](https://github.com/ggerganov/whisper.cpp/blob/master/include/whisper.h)
 
 Supported platforms:
@@ -74,7 +75,7 @@ git clone https://github.com/ggerganov/whisper.cpp.git
 Then, download one of the Whisper [models](models/README.md) converted in [`ggml` format](#ggml-format). For example:
 
 ```bash
-bash ./models/download-ggml-model.sh base.en
+sh ./models/download-ggml-model.sh base.en
 ```
 
 Now build the [main](examples/main) example and transcribe an audio file like this:
@@ -145,7 +146,7 @@ options:
   -ng,       --no-gpu            [false  ] disable GPU
 
 
-bash ./models/download-ggml-model.sh base.en
+sh ./models/download-ggml-model.sh base.en
 Downloading ggml model base.en ...
 ggml-base.en.bin               100%[========================>] 141.11M  6.34MB/s    in 24s
 Done! Model 'base.en' saved in 'models/ggml-base.en.bin'
@@ -447,6 +448,39 @@ cd build
 cmake -DWHISPER_MKL=ON ..
 WHISPER_MKL=1 make -j
 ```
+
+## Ascend NPU support
+
+Ascend NPU provides inference acceleration via [`CANN`](https://www.hiascend.com/en/software/cann) and AI cores. 
+
+First, check if your Ascend NPU device is supported:
+
+**Verified devices**
+| Ascend NPU                    | Status  |
+|:-----------------------------:|:-------:|
+| Atlas 300T A2                 | Support |
+
+Then, make sure you have installed [`CANN toolkit`](https://www.hiascend.com/en/software/cann/community) . The lasted version of CANN is recommanded.
+
+Now build `whisper.cpp` with CANN support:
+
+```
+mkdir build
+cd build
+cmake .. -D GGML_CANN=on
+make -j
+```
+
+Run the inference examples as usual, for example:
+
+```
+./build/bin/main -f samples/jfk.wav -m models/ggml-base.en.bin -t 8
+```
+
+*Notes:*
+
+- If you have trouble with Ascend NPU device, please create a issue with **[CANN]** prefix/tag.
+- If you run successfully with your Ascend NPU device, please help update the table `Verified devices`.
 
 ## Docker
 
