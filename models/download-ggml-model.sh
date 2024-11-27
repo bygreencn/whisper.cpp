@@ -46,7 +46,9 @@ large-v1
 large-v2
 large-v2-q5_0
 large-v3
-large-v3-q5_0"
+large-v3-q5_0
+large-v3-turbo
+large-v3-turbo-q5_0"
 
 # list available models
 list_models() {
@@ -101,7 +103,9 @@ if [ -f "ggml-$model.bin" ]; then
     exit 0
 fi
 
-if [ -x "$(command -v wget)" ]; then
+if [ -x "$(command -v wget2)" ]; then
+    wget2 --no-config --progress bar -O ggml-"$model".bin $src/$pfx-"$model".bin
+elif [ -x "$(command -v wget)" ]; then
     wget --no-config --quiet --show-progress -O ggml-"$model".bin $src/$pfx-"$model".bin
 elif [ -x "$(command -v curl)" ]; then
     curl -L --output ggml-"$model".bin $src/$pfx-"$model".bin

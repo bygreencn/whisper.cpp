@@ -18,27 +18,29 @@ let package = Package(
             name: "whisper",
             path: ".",
             exclude: [
+               "build",
                "bindings",
                "cmake",
-               "coreml",
                "examples",
-               "extra",
+               "scripts",
                "models",
                "samples",
                "tests",
                "CMakeLists.txt",
-               "Makefile"
+               "Makefile",
+               "ggml/src/ggml-metal-embed.metal"
             ],
             sources: [
                 "ggml/src/ggml.c",
                 "src/whisper.cpp",
                 "ggml/src/ggml-aarch64.c",
                 "ggml/src/ggml-alloc.c",
-                "ggml/src/ggml-backend.c",
+                "ggml/src/ggml-backend.cpp",
+                "ggml/src/ggml-cpu.c",
                 "ggml/src/ggml-quants.c",
                 "ggml/src/ggml-metal.m"
             ],
-            resources: [.process("ggml-metal.metal")],
+            resources: [.process("ggml/src/ggml-metal.metal")],
             publicHeadersPath: "spm-headers",
             cSettings: [
                 .unsafeFlags(["-Wno-shorten-64-to-32", "-O3", "-DNDEBUG"]),

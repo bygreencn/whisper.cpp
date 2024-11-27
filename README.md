@@ -7,21 +7,23 @@
 [![Conan Center](https://shields.io/conan/v/whisper-cpp)](https://conan.io/center/whisper-cpp)
 [![npm](https://img.shields.io/npm/v/whisper.cpp.svg)](https://www.npmjs.com/package/whisper.cpp/)
 
-Stable: [v1.6.2](https://github.com/ggerganov/whisper.cpp/releases/tag/v1.6.0) / [Roadmap | F.A.Q.](https://github.com/ggerganov/whisper.cpp/discussions/126)
+Stable: [v1.7.2](https://github.com/ggerganov/whisper.cpp/releases/tag/v1.7.2) / [Roadmap | F.A.Q.](https://github.com/ggerganov/whisper.cpp/discussions/126)
 
 High-performance inference of [OpenAI's Whisper](https://github.com/openai/whisper) automatic speech recognition (ASR) model:
 
 - Plain C/C++ implementation without dependencies
-- Apple Silicon first-class citizen - optimized via ARM NEON, Accelerate framework, Metal and [Core ML](https://github.com/ggerganov/whisper.cpp#core-ml-support)
+- Apple Silicon first-class citizen - optimized via ARM NEON, Accelerate framework, Metal and [Core ML](#core-ml-support)
 - AVX intrinsics support for x86 architectures
 - VSX intrinsics support for POWER architectures
 - Mixed F16 / F32 precision
-- [4-bit and 5-bit integer quantization support](https://github.com/ggerganov/whisper.cpp#quantization)
+- [Integer quantization support](#quantization)
 - Zero memory allocations at runtime
+- [Vulkan support](#vulkan-gpu-support)
 - Support for CPU-only inference
-- [Efficient GPU support for NVIDIA](https://github.com/ggerganov/whisper.cpp#nvidia-gpu-support-via-cublas)
-- [OpenVINO Support](https://github.com/ggerganov/whisper.cpp#openvino-support)
-- [C-style API](https://github.com/ggerganov/whisper.cpp/blob/master/whisper.h)
+- [Efficient GPU support for NVIDIA](#nvidia-gpu-support)
+- [OpenVINO Support](#openvino-support)
+- [Ascend NPU Support](#ascend-npu-support)
+- [C-style API](https://github.com/ggerganov/whisper.cpp/blob/master/include/whisper.h)
 
 Supported platforms:
 
@@ -33,9 +35,9 @@ Supported platforms:
 - [x] [WebAssembly](examples/whisper.wasm)
 - [x] Windows ([MSVC](https://github.com/ggerganov/whisper.cpp/blob/master/.github/workflows/build.yml#L117-L144) and [MinGW](https://github.com/ggerganov/whisper.cpp/issues/168)]
 - [x] [Raspberry Pi](https://github.com/ggerganov/whisper.cpp/discussions/166)
-- [x] [docker](https://github.com/ggerganov/whisper.cpp/pkgs/container/whisper.cpp)
+- [x] [Docker](https://github.com/ggerganov/whisper.cpp/pkgs/container/whisper.cpp)
 
-The entire high-level implementation of the model is contained in [whisper.h](whisper.h) and [whisper.cpp](whisper.cpp).
+The entire high-level implementation of the model is contained in [whisper.h](include/whisper.h) and [whisper.cpp](src/whisper.cpp).
 The rest of the code is part of the [`ggml`](https://github.com/ggerganov/ggml) machine learning library.
 
 Having such a lightweight implementation of the model allows to easily integrate it in different platforms and applications.
@@ -55,8 +57,8 @@ Or you can even run it straight in the browser: [talk.wasm](examples/talk.wasm)
 
 ## Implementation details
 
-- The core tensor operations are implemented in C ([ggml.h](ggml.h) / [ggml.c](ggml.c))
-- The transformer model and the high-level C-style API are implemented in C++ ([whisper.h](whisper.h) / [whisper.cpp](whisper.cpp))
+- The core tensor operations are implemented in C ([ggml.h](ggml/include/ggml.h) / [ggml.c](ggml/src/ggml.c))
+- The transformer model and the high-level C-style API are implemented in C++ ([whisper.h](include/whisper.h) / [whisper.cpp](src/whisper.cpp))
 - Sample usage is demonstrated in [main.cpp](examples/main)
 - Sample real-time audio transcription from the microphone is demonstrated in [stream.cpp](examples/stream)
 - Various other examples are available in the [examples](examples) folder
@@ -71,17 +73,23 @@ First clone the repository:
 git clone https://github.com/ggerganov/whisper.cpp.git
 ```
 
+Navigate into the directory:
+
+```
+cd whisper.cpp
+```
+
 Then, download one of the Whisper [models](models/README.md) converted in [`ggml` format](#ggml-format). For example:
 
 ```bash
-bash ./models/download-ggml-model.sh base.en
+sh ./models/download-ggml-model.sh base.en
 ```
 
 Now build the [main](examples/main) example and transcribe an audio file like this:
 
 ```bash
 # build the main example
-make
+make -j
 
 # transcribe an audio file
 ./main -f samples/jfk.wav
@@ -92,7 +100,7 @@ make
 For a quick demo, simply run `make base.en`:
 
 ```text
-$ make base.en
+$ make -j base.en
 
 cc  -I.              -O3 -std=c11   -pthread -DGGML_USE_ACCELERATE   -c ggml.c -o ggml.o
 c++ -I. -I./examples -O3 -std=c++11 -pthread -c whisper.cpp -o whisper.o
@@ -145,7 +153,7 @@ options:
   -ng,       --no-gpu            [false  ] disable GPU
 
 
-bash ./models/download-ggml-model.sh base.en
+sh ./models/download-ggml-model.sh base.en
 Downloading ggml model base.en ...
 ggml-base.en.bin               100%[========================>] 141.11M  6.34MB/s    in 24s
 Done! Model 'base.en' saved in 'models/ggml-base.en.bin'
@@ -216,7 +224,7 @@ ffmpeg -i input.mp3 -ar 16000 -ac 1 -c:a pcm_s16le output.wav
 If you want some extra audio samples to play with, simply run:
 
 ```
-make samples
+make -j samples
 ```
 
 This will download a few more audio files from Wikipedia and convert them to 16-bit WAV format via `ffmpeg`.
@@ -224,17 +232,18 @@ This will download a few more audio files from Wikipedia and convert them to 16-
 You can download and run the other models as follows:
 
 ```
-make tiny.en
-make tiny
-make base.en
-make base
-make small.en
-make small
-make medium.en
-make medium
-make large-v1
-make large-v2
-make large-v3
+make -j tiny.en
+make -j tiny
+make -j base.en
+make -j base
+make -j small.en
+make -j small
+make -j medium.en
+make -j medium
+make -j large-v1
+make -j large-v2
+make -j large-v3
+make -j large-v3-turbo
 ```
 
 ## Memory usage
@@ -256,7 +265,7 @@ Here are the steps for creating and using a quantized model:
 
 ```bash
 # quantize a model with Q5_0 method
-make quantize
+make -j quantize
 ./quantize models/ggml-base.en.bin models/ggml-base.en-q5_0.bin q5_0
 
 # run the examples as usual, specifying the quantized model file
@@ -421,6 +430,16 @@ make clean
 GGML_CUDA=1 make -j
 ```
 
+## Vulkan GPU support
+Cross-vendor solution which allows you to accelerate workload on your GPU.
+First, make sure your graphics card driver provides support for Vulkan API.
+
+Now build `whisper.cpp` with Vulkan support:
+```
+make clean
+make GGML_VULKAN=1 -j
+```
+
 ## BLAS CPU support via OpenBLAS
 
 Encoder processing can be accelerated on the CPU via OpenBLAS.
@@ -447,6 +466,39 @@ cd build
 cmake -DWHISPER_MKL=ON ..
 WHISPER_MKL=1 make -j
 ```
+
+## Ascend NPU support
+
+Ascend NPU provides inference acceleration via [`CANN`](https://www.hiascend.com/en/software/cann) and AI cores. 
+
+First, check if your Ascend NPU device is supported:
+
+**Verified devices**
+| Ascend NPU                    | Status  |
+|:-----------------------------:|:-------:|
+| Atlas 300T A2                 | Support |
+
+Then, make sure you have installed [`CANN toolkit`](https://www.hiascend.com/en/software/cann/community) . The lasted version of CANN is recommanded.
+
+Now build `whisper.cpp` with CANN support:
+
+```
+mkdir build
+cd build
+cmake .. -D GGML_CANN=on
+make -j
+```
+
+Run the inference examples as usual, for example:
+
+```
+./build/bin/main -f samples/jfk.wav -m models/ggml-base.en.bin -t 8
+```
+
+*Notes:*
+
+- If you have trouble with Ascend NPU device, please create a issue with **[CANN]** prefix/tag.
+- If you run successfully with your Ascend NPU device, please help update the table `Verified devices`.
 
 ## Docker
 
@@ -584,7 +636,7 @@ The [stream](examples/stream) tool samples the audio every half a second and run
 More info is available in [issue #10](https://github.com/ggerganov/whisper.cpp/issues/10).
 
 ```bash
-make stream
+make stream -j
 ./stream -m ./models/ggml-base.en.bin -t 8 --step 500 --length 5000
 ```
 
@@ -751,7 +803,7 @@ took to execute it. The results are summarized in the following Github issue:
 
 [Benchmark results](https://github.com/ggerganov/whisper.cpp/issues/89)
 
-Additionally a script to run whisper.cpp with different models and audio files is provided [bench.py](bench.py).
+Additionally a script to run whisper.cpp with different models and audio files is provided [bench.py](scripts/bench.py).
 
 You can run it with the following command, by default it will run against any standard model in the models folder.
 
@@ -798,6 +850,7 @@ For more details, see the conversion script [models/convert-pt-to-ggml.py](model
   - [stlukey/whispercpp.py](https://github.com/stlukey/whispercpp.py) (Cython)
   - [AIWintermuteAI/whispercpp](https://github.com/AIWintermuteAI/whispercpp) (Updated fork of aarnphm/whispercpp)
   - [aarnphm/whispercpp](https://github.com/aarnphm/whispercpp) (Pybind11)
+  - [abdeladim-s/pywhispercpp](https://github.com/abdeladim-s/pywhispercpp) (Pybind11)
 - [x] R: [bnosac/audio.whisper](https://github.com/bnosac/audio.whisper)
 - [x] Unity: [macoron/whisper.unity](https://github.com/Macoron/whisper.unity)
 

@@ -56,6 +56,15 @@ else()
     set(GGML_NATIVE_DEFAULT ON)
 endif()
 
+# defaults
+if (NOT GGML_LLAMAFILE_DEFAULT)
+    set(GGML_LLAMAFILE_DEFAULT OFF)
+endif()
+
+if (NOT GGML_CUDA_GRAPHS_DEFAULT)
+    set(GGML_CUDA_GRAPHS_DEFAULT OFF)
+endif()
+
 # general
 option(GGML_STATIC "ggml: static link libraries"         OFF)
 option(GGML_NATIVE "ggml: enable -march=native flag"     ${GGML_NATIVE_DEFAULT})
@@ -90,6 +99,9 @@ option(GGML_AVX512      "ggml: enable AVX512"           OFF)
 option(GGML_AVX512_VBMI "ggml: enable AVX512-VBMI"      OFF)
 option(GGML_AVX512_VNNI "ggml: enable AVX512-VNNI"      OFF)
 option(GGML_AVX512_BF16 "ggml: enable AVX512-BF16"      OFF)
+option(GGML_AMX_TILE    "ggml: enable AMX-TILE"         OFF)
+option(GGML_AMX_INT8    "ggml: enable AMX-INT8"         OFF)
+option(GGML_AMX_BF16    "ggml: enable AMX-BF16"         OFF)
 option(GGML_FMA         "ggml: enable FMA"              ${INS_ENB})
 if (NOT MSVC)
     option(GGML_F16C    "ggml: enable F16C"             ${INS_ENB}) # in MSVC F16C is implied with AVX2/AVX512
@@ -110,7 +122,7 @@ option(GGML_ACCELERATE                      "ggml: enable Accelerate framework" 
 option(GGML_BLAS                            "ggml: use BLAS"                                  ${GGML_BLAS_DEFAULT})
 set(GGML_BLAS_VENDOR ${GGML_BLAS_VENDOR_DEFAULT} CACHE STRING
                                             "ggml: BLAS library vendor")
-option(GGML_LLAMAFILE                       "ggml: use LLAMAFILE"                             OFF)
+option(GGML_LLAMAFILE                       "ggml: use LLAMAFILE"                             ${GGML_LLAMAFILE_DEFAULT})
 
 option(GGML_CUDA                            "ggml: use CUDA"                                  OFF)
 option(GGML_MUSA                            "ggml: use MUSA"                                  OFF)
@@ -127,19 +139,21 @@ set   (GGML_CUDA_PEER_MAX_BATCH_SIZE "128" CACHE STRING
 option(GGML_CUDA_NO_PEER_COPY               "ggml: do not use peer to peer copies"            OFF)
 option(GGML_CUDA_NO_VMM                     "ggml: do not try to use CUDA VMM"                OFF)
 option(GGML_CUDA_FA_ALL_QUANTS              "ggml: compile all quants for FlashAttention"     OFF)
-option(GGML_CUDA_USE_GRAPHS                 "ggml: use CUDA graphs (llama.cpp only)"          OFF)
+option(GGML_CUDA_GRAPHS                     "ggml: use CUDA graphs (llama.cpp only)"          ${GGML_CUDA_GRAPHS_DEFAULT})
 
-option(GGML_CURL                            "ggml: use libcurl to download model from an URL" OFF)
 option(GGML_HIPBLAS                         "ggml: use hipBLAS"                               OFF)
 option(GGML_HIP_UMA                         "ggml: use HIP unified memory architecture"       OFF)
 option(GGML_VULKAN                          "ggml: use Vulkan"                                OFF)
 option(GGML_VULKAN_CHECK_RESULTS            "ggml: run Vulkan op checks"                      OFF)
 option(GGML_VULKAN_DEBUG                    "ggml: enable Vulkan debug output"                OFF)
 option(GGML_VULKAN_MEMORY_DEBUG             "ggml: enable Vulkan memory debug output"         OFF)
+option(GGML_VULKAN_SHADER_DEBUG_INFO        "ggml: enable Vulkan shader debug info"           OFF)
+option(GGML_VULKAN_PERF                     "ggml: enable Vulkan perf output"                 OFF)
 option(GGML_VULKAN_VALIDATE                 "ggml: enable Vulkan validation"                  OFF)
 option(GGML_VULKAN_RUN_TESTS                "ggml: run Vulkan tests"                          OFF)
 option(GGML_KOMPUTE                         "ggml: use Kompute"                               OFF)
 option(GGML_METAL                           "ggml: use Metal"                                 ${GGML_METAL_DEFAULT})
+option(GGML_METAL_USE_BF16                  "ggml: use bfloat if available"                   OFF)
 option(GGML_METAL_NDEBUG                    "ggml: disable Metal debugging"                   OFF)
 option(GGML_METAL_SHADER_DEBUG              "ggml: compile Metal with -fno-fast-math"         OFF)
 option(GGML_METAL_EMBED_LIBRARY             "ggml: embed Metal library"                       ${GGML_METAL})
@@ -148,6 +162,7 @@ set   (GGML_METAL_MACOSX_VERSION_MIN "" CACHE STRING
 set   (GGML_METAL_STD "" CACHE STRING       "ggml: metal standard version (-std flag)")
 option(GGML_OPENMP                          "ggml: use OpenMP"                                ON)
 option(GGML_RPC                             "ggml: use RPC"                                   OFF)
+option(GGML_AMX                             "ggml: use AMX"                                   OFF)
 option(GGML_SYCL                            "ggml: use SYCL"                                  OFF)
 option(GGML_SYCL_F16                        "ggml: use 16 bit floats for sycl calculations"   OFF)
 set   (GGML_SYCL_TARGET "INTEL" CACHE STRING
@@ -204,12 +219,12 @@ include(CMakePackageConfigHelpers)
 # all public headers
 set(GGML_PUBLIC_HEADERS
     include/ggml.h
+    include/ggml-cpu.h
     include/ggml-alloc.h
     include/ggml-backend.h
     include/ggml-blas.h
     include/ggml-cann.h
     include/ggml-cuda.h
-    include/ggml.h
     include/ggml-kompute.h
     include/ggml-metal.h
     include/ggml-rpc.h

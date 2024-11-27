@@ -219,7 +219,7 @@ void check_ffmpeg_availibility() {
 bool convert_to_wav(const std::string & temp_filename, std::string & error_resp) {
     std::ostringstream cmd_stream;
     std::string converted_filename_temp = temp_filename + "_temp.wav";
-    cmd_stream << "ffmpeg -i \"" << temp_filename << "\" -ar 16000 -ac 1 -c:a pcm_s16le \"" << converted_filename_temp << "\" 2>&1";
+    cmd_stream << "ffmpeg -i \"" << temp_filename << "\" -y -ar 16000 -ac 1 -c:a pcm_s16le \"" << converted_filename_temp << "\" 2>&1";
     std::string cmd = cmd_stream.str();
 
     int status = std::system(cmd.c_str());
@@ -677,7 +677,8 @@ int main(int argc, char ** argv) {
         if (sparams.ffmpeg_converter) {
             // if file is not wav, convert to wav
             // write to temporary file
-            const std::string temp_filename = "whisper_server_temp_file.wav";
+            const std::string temp_filename_base = std::tmpnam(nullptr);
+            const std::string temp_filename = temp_filename_base + ".wav";
             std::ofstream temp_file{temp_filename, std::ios::binary};
             temp_file << audio_file.content;
             temp_file.close();
