@@ -3,7 +3,6 @@
 
 #include "common-sdl.h"
 #include "common.h"
-#include "console.h"
 #include "whisper.h"
 #include "llama.h"
 
@@ -17,7 +16,7 @@
 #include <regex>
 #include <sstream>
 
-std::vector<llama_token> llama_tokenize(struct llama_context * ctx, const std::string & text, bool add_bos) {
+static std::vector<llama_token> llama_tokenize(struct llama_context * ctx, const std::string & text, bool add_bos) {
     auto * model = llama_get_model(ctx);
 
     // upper limit for the number of tokens
@@ -34,12 +33,12 @@ std::vector<llama_token> llama_tokenize(struct llama_context * ctx, const std::s
     return result;
 }
 
-std::string llama_token_to_piece(const struct llama_context * ctx, llama_token token) {
+static std::string llama_token_to_piece(const struct llama_context * ctx, llama_token token) {
     std::vector<char> result(8, 0);
-    const int n_tokens = llama_token_to_piece(llama_get_model(ctx), token, result.data(), result.size(), false);
+    const int n_tokens = llama_token_to_piece(llama_get_model(ctx), token, result.data(), result.size(), 0, false);
     if (n_tokens < 0) {
         result.resize(-n_tokens);
-        int check = llama_token_to_piece(llama_get_model(ctx), token, result.data(), result.size(), false);
+        int check = llama_token_to_piece(llama_get_model(ctx), token, result.data(), result.size(), 0, false);
         GGML_ASSERT(check == -n_tokens);
     } else {
         result.resize(n_tokens);
@@ -82,9 +81,9 @@ struct whisper_params {
     std::string path_session = "";       // path to file for saving/loading model eval state
 };
 
-void whisper_print_usage(int argc, const char ** argv, const whisper_params & params);
+void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
-bool whisper_params_parse(int argc, const char ** argv, whisper_params & params) {
+static bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -134,7 +133,7 @@ bool whisper_params_parse(int argc, const char ** argv, whisper_params & params)
     return true;
 }
 
-void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params & params) {
+void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params) {
     fprintf(stderr, "\n");
     fprintf(stderr, "usage: %s [options]\n", argv[0]);
     fprintf(stderr, "\n");
@@ -169,7 +168,7 @@ void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params 
     fprintf(stderr, "\n");
 }
 
-std::string transcribe(
+static std::string transcribe(
         whisper_context * ctx,
         const whisper_params & params,
         const std::vector<float> & pcmf32,
@@ -236,7 +235,7 @@ std::string transcribe(
     return result;
 }
 
-std::vector<std::string> get_words(const std::string &txt) {
+static std::vector<std::string> get_words(const std::string &txt) {
     std::vector<std::string> words;
 
     std::istringstream iss(txt);
@@ -268,7 +267,7 @@ The transcript only includes text, it does not include markup like HTML and Mark
 {1}{4} Blue
 {0}{4})";
 
-int run(int argc, const char ** argv) {
+int main(int argc, char ** argv) {
     whisper_params params;
 
     if (whisper_params_parse(argc, argv, params) == false) {
@@ -315,7 +314,6 @@ int run(int argc, const char ** argv) {
 
     // tune these to your liking
     lcparams.n_ctx      = 2048;
-    lcparams.seed       = 1;
     lcparams.n_threads  = params.n_threads;
     lcparams.flash_attn = params.flash_attn;
 
@@ -403,6 +401,26 @@ int run(int argc, const char ** argv) {
 
     llama_batch batch = llama_batch_init(llama_n_ctx(ctx_llama), 0, 1);
 
+    // init sampler
+    const float top_k = 5;
+    const float top_p = 0.80f;
+    const float temp  = 0.30f;
+
+    const int seed = 0;
+
+    auto sparams = llama_sampler_chain_default_params();
+
+    llama_sampler * smpl = llama_sampler_chain_init(sparams);
+
+    if (temp > 0.0f) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_k(top_k));
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_p(top_p, 1));
+        llama_sampler_chain_add(smpl, llama_sampler_init_temp (temp));
+        llama_sampler_chain_add(smpl, llama_sampler_init_dist (seed));
+    } else {
+        llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+    }
+
     // init session
     std::string path_session = params.path_session;
     std::vector<llama_token> session_tokens;
@@ -418,7 +436,7 @@ int run(int argc, const char ** argv) {
 
             session_tokens.resize(llama_n_ctx(ctx_llama));
             size_t n_token_count_out = 0;
-            if (!llama_load_session_file(ctx_llama, path_session.c_str(), session_tokens.data(), session_tokens.capacity(), &n_token_count_out)) {
+            if (!llama_state_load_file(ctx_llama, path_session.c_str(), session_tokens.data(), session_tokens.capacity(), &n_token_count_out)) {
                 fprintf(stderr, "%s: error: failed to load session file '%s'\n", __func__, path_session.c_str());
                 return 1;
             }
@@ -701,54 +719,13 @@ int run(int argc, const char ** argv) {
 
                     {
                         // out of user input, sample next token
-                        const float top_k          = 5;
-                        const float top_p          = 0.80f;
-                        const float temp           = 0.30f;
-                        const float repeat_penalty = 1.1764f;
-
-                        const int repeat_last_n    = 256;
 
                         if (!path_session.empty() && need_to_save_session) {
                             need_to_save_session = false;
-                            llama_save_session_file(ctx_llama, path_session.c_str(), session_tokens.data(), session_tokens.size());
+                            llama_state_save_file(ctx_llama, path_session.c_str(), session_tokens.data(), session_tokens.size());
                         }
 
-                        llama_token id = 0;
-
-                        {
-                            auto logits = llama_get_logits(ctx_llama);
-                            auto n_vocab = llama_n_vocab(model_llama);
-
-                            logits[llama_token_eos(model_llama)] = 0;
-
-                            std::vector<llama_token_data> candidates;
-                            candidates.reserve(n_vocab);
-                            for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
-                                candidates.emplace_back(llama_token_data{token_id, logits[token_id], 0.0f});
-                            }
-
-                            llama_token_data_array candidates_p = { candidates.data(), candidates.size(), false };
-
-                            // apply repeat penalty
-                            const float nl_logit = logits[llama_token_nl(model_llama)];
-
-                            llama_sample_repetition_penalties(ctx_llama, &candidates_p,
-                                    embd_inp.data() + std::max(0, n_past - repeat_last_n),
-                                    repeat_last_n, repeat_penalty, 0.0, 0.0f);
-
-                            logits[llama_token_nl(model_llama)] = nl_logit;
-
-                            if (temp <= 0) {
-                                // Greedy sampling
-                                id = llama_sample_token_greedy(ctx_llama, &candidates_p);
-                            } else {
-                                // Temperature sampling
-                                llama_sample_top_k(ctx_llama, &candidates_p, top_k, 1);
-                                llama_sample_top_p(ctx_llama, &candidates_p, top_p, 1);
-                                llama_sample_temp (ctx_llama, &candidates_p, temp);
-                                id = llama_sample_token(ctx_llama, &candidates_p);
-                            }
-                        }
+                        const llama_token id = llama_sampler_sample(smpl, ctx_llama, -1);
 
                         if (id != llama_token_eos(model_llama)) {
                             // add it to the context
@@ -798,28 +775,14 @@ int run(int argc, const char ** argv) {
     whisper_print_timings(ctx_wsp);
     whisper_free(ctx_wsp);
 
-    llama_print_timings(ctx_llama);
+    llama_perf_sampler_print(smpl);
+    llama_perf_context_print(ctx_llama);
+
+    llama_sampler_free(smpl);
+    llama_batch_free(batch);
     llama_free(ctx_llama);
+
+    llama_backend_free();
 
     return 0;
 }
-
-#if _WIN32
-int wmain(int argc, const wchar_t ** argv_UTF16LE) {
-    console::init(true, true);
-    atexit([]() { console::cleanup(); });
-    std::vector<std::string> buffer(argc);
-    std::vector<const char*> argv_UTF8(argc);
-    for (int i = 0; i < argc; ++i) {
-        buffer[i] = console::UTF16toUTF8(argv_UTF16LE[i]);
-        argv_UTF8[i] = buffer[i].c_str();
-    }
-    return run(argc, argv_UTF8.data());
-}
-#else
-int main(int argc, const char ** argv_UTF8) {
-    console::init(true, true);
-    atexit([]() { console::cleanup(); });
-    return run(argc, argv_UTF8);
-}
-#endif

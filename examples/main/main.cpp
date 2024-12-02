@@ -1,5 +1,4 @@
 #include "common.h"
-#include "console.h"
 
 #include "whisper.h"
 #include "grammar-parser.h"
@@ -18,7 +17,7 @@
 #endif
 
 // helper function to replace substrings
-void replace_all(std::string & s, const std::string & search, const std::string & replace) {
+static void replace_all(std::string & s, const std::string & search, const std::string & replace) {
     for (size_t pos = 0; ; pos += replace.length()) {
         pos = s.find(search, pos);
         if (pos == std::string::npos) break;
@@ -44,7 +43,6 @@ struct whisper_params {
     float word_thold      =  0.01f;
     float entropy_thold   =  2.40f;
     float logprob_thold   = -1.00f;
-    float no_speech_thold =  0.60f;
     float grammar_penalty = 100.0f;
     float temperature     = 0.0f;
     float temperature_inc = 0.2f;
@@ -54,6 +52,7 @@ struct whisper_params {
     bool detect_language = false;
     bool diarize         = false;
     bool tinydiarize     = false;
+    bool split_on_word   = false;
     bool no_fallback     = false;
     bool output_txt      = false;
     bool output_vtt      = false;
@@ -68,8 +67,6 @@ struct whisper_params {
     bool print_colors    = false;
     bool print_progress  = false;
     bool no_timestamps   = false;
-    bool suppress_nst    = true;  // suppress non speech tokens
-    bool heuristic       = true;
     bool log_score       = false;
     bool use_gpu         = true;
     bool flash_attn      = false;
@@ -97,16 +94,17 @@ struct whisper_params {
     grammar_parser::parse_state grammar_parsed;
 };
 
-void whisper_print_usage(int argc, const char ** argv, const whisper_params & params);
+static void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
-std::string toLowerCase(const std::string& input) {
-    std::string result = input; // Create a copy of the input string
-    std::transform(result.begin(), result.end(), result.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
-    return result;
+static char * whisper_param_turn_lowercase(char * in){
+    int string_len = strlen(in);
+    for (int i = 0; i < string_len; i++){
+        *(in+i) = tolower((unsigned char)*(in+i));
+    }
+    return in;
 }
 
-bool whisper_params_parse(int argc, const char ** argv, whisper_params & params) {
+static bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -137,15 +135,13 @@ bool whisper_params_parse(int argc, const char ** argv, whisper_params & params)
         else if (arg == "-wt"   || arg == "--word-thold")      { params.word_thold      = std::stof(argv[++i]); }
         else if (arg == "-et"   || arg == "--entropy-thold")   { params.entropy_thold   = std::stof(argv[++i]); }
         else if (arg == "-lpt"  || arg == "--logprob-thold")   { params.logprob_thold   = std::stof(argv[++i]); }
-        else if (arg == "-nst"  || arg == "--nospeech-thold")  { params.no_speech_thold = std::stof(argv[++i]); }
-        else if (arg == "-nsnst"|| arg == "--no-suppress-nst") { params.suppress_nst    = false; }
-        else if (arg == "-nh"   || arg == "--no-heuristic")    { params.heuristic       = false; }
         else if (arg == "-tp"   || arg == "--temperature")     { params.temperature     = std::stof(argv[++i]); }
         else if (arg == "-tpi"  || arg == "--temperature-inc") { params.temperature_inc = std::stof(argv[++i]); }
         else if (arg == "-debug"|| arg == "--debug-mode")      { params.debug_mode      = true; }
         else if (arg == "-tr"   || arg == "--translate")       { params.translate       = true; }
         else if (arg == "-di"   || arg == "--diarize")         { params.diarize         = true; }
         else if (arg == "-tdrz" || arg == "--tinydiarize")     { params.tinydiarize     = true; }
+        else if (arg == "-sow"  || arg == "--split-on-word")   { params.split_on_word   = true; }
         else if (arg == "-nf"   || arg == "--no-fallback")     { params.no_fallback     = true; }
         else if (arg == "-otxt" || arg == "--output-txt")      { params.output_txt      = true; }
         else if (arg == "-ovtt" || arg == "--output-vtt")      { params.output_vtt      = true; }
@@ -162,7 +158,7 @@ bool whisper_params_parse(int argc, const char ** argv, whisper_params & params)
         else if (arg == "-pc"   || arg == "--print-colors")    { params.print_colors    = true; }
         else if (arg == "-pp"   || arg == "--print-progress")  { params.print_progress  = true; }
         else if (arg == "-nt"   || arg == "--no-timestamps")   { params.no_timestamps   = true; }
-        else if (arg == "-l"    || arg == "--language")        { params.language        = toLowerCase(argv[++i]); }
+        else if (arg == "-l"    || arg == "--language")        { params.language        = whisper_param_turn_lowercase(argv[++i]); }
         else if (arg == "-dl"   || arg == "--detect-language") { params.detect_language = true; }
         else if (                  arg == "--prompt")          { params.prompt          = argv[++i]; }
         else if (arg == "-m"    || arg == "--model")           { params.model           = argv[++i]; }
@@ -186,7 +182,7 @@ bool whisper_params_parse(int argc, const char ** argv, whisper_params & params)
     return true;
 }
 
-void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params & params) {
+static void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params) {
     fprintf(stderr, "\n");
     fprintf(stderr, "usage: %s [options] file0.wav file1.wav ...\n", argv[0]);
     fprintf(stderr, "\n");
@@ -199,15 +195,13 @@ void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params 
     fprintf(stderr, "  -d  N,     --duration N        [%-7d] duration of audio to process in milliseconds\n",   params.duration_ms);
     fprintf(stderr, "  -mc N,     --max-context N     [%-7d] maximum number of text context tokens to store\n", params.max_context);
     fprintf(stderr, "  -ml N,     --max-len N         [%-7d] maximum segment length in characters\n",           params.max_len);
+    fprintf(stderr, "  -sow,      --split-on-word     [%-7s] split on word rather than on token\n",             params.split_on_word ? "true" : "false");
     fprintf(stderr, "  -bo N,     --best-of N         [%-7d] number of best candidates to keep\n",              params.best_of);
     fprintf(stderr, "  -bs N,     --beam-size N       [%-7d] beam size for beam search\n",                      params.beam_size);
     fprintf(stderr, "  -ac N,     --audio-ctx N       [%-7d] audio context size (0 - all)\n",                   params.audio_ctx);
     fprintf(stderr, "  -wt N,     --word-thold N      [%-7.2f] word timestamp probability threshold\n",         params.word_thold);
     fprintf(stderr, "  -et N,     --entropy-thold N   [%-7.2f] entropy threshold for decoder fail\n",           params.entropy_thold);
     fprintf(stderr, "  -lpt N,    --logprob-thold N   [%-7.2f] log probability threshold for decoder fail\n",   params.logprob_thold);
-    fprintf(stderr, "  -nst N,    --nospeech-thold N  [%-7.2f] no-speech threshold for decoder fail\n",         params.no_speech_thold);
-    fprintf(stderr, "  -nsnst,    --no-suppress-nst   [%-7s] do not suppress non-speech tokens\n",              params.suppress_nst ? "false" : "true");
-    fprintf(stderr, "  -nh,       --no-heuristic      [%-7s] do not use heuristic while decoding\n",            params.heuristic ? "false" : "true");
     fprintf(stderr, "  -tp,       --temperature N     [%-7.2f] The sampling temperature, between 0 and 1\n",    params.temperature);
     fprintf(stderr, "  -tpi,      --temperature-inc N [%-7.2f] The increment of temperature, between 0 and 1\n",params.temperature_inc);
     fprintf(stderr, "  -debug,    --debug-mode        [%-7s] enable debug mode (eg. dump log_mel)\n",           params.debug_mode ? "true" : "false");
@@ -254,7 +248,7 @@ struct whisper_print_user_data {
     int progress_prev;
 };
 
-std::string estimate_diarization_speaker(std::vector<std::vector<float>> pcmf32s, int64_t t0, int64_t t1, bool id_only = false) {
+static std::string estimate_diarization_speaker(std::vector<std::vector<float>> pcmf32s, int64_t t0, int64_t t1, bool id_only = false) {
     std::string speaker = "";
     const int64_t n_samples = pcmf32s[0].size();
 
@@ -286,7 +280,8 @@ std::string estimate_diarization_speaker(std::vector<std::vector<float>> pcmf32s
 
     return speaker;
 }
-void whisper_print_progress_callback(struct whisper_context * /*ctx*/, struct whisper_state * /*state*/, int progress, void * user_data) {
+
+static void whisper_print_progress_callback(struct whisper_context * /*ctx*/, struct whisper_state * /*state*/, int progress, void * user_data) {
     int progress_step = ((whisper_print_user_data *) user_data)->params->progress_step;
     int * progress_prev  = &(((whisper_print_user_data *) user_data)->progress_prev);
     if (progress >= *progress_prev + progress_step) {
@@ -295,7 +290,7 @@ void whisper_print_progress_callback(struct whisper_context * /*ctx*/, struct wh
     }
 }
 
-void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper_state * /*state*/, int n_new, void * user_data) {
+static void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper_state * /*state*/, int n_new, void * user_data) {
     const auto & params  = *((whisper_print_user_data *) user_data)->params;
     const auto & pcmf32s = *((whisper_print_user_data *) user_data)->pcmf32s;
 
@@ -325,15 +320,9 @@ void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper
 
         if (params.diarize && pcmf32s.size() == 2) {
             speaker = estimate_diarization_speaker(pcmf32s, t0, t1);
-            printf("%s", speaker.c_str());
         }
 
-
         if (params.print_colors) {
-            std::string buffer;
-            float probability_sum = 0;
-            int count = 0;
-
             for (int j = 0; j < whisper_full_n_tokens(ctx, i); ++j) {
                 if (params.print_special == false) {
                     const whisper_token id = whisper_full_get_token_id(ctx, i, j);
@@ -342,21 +331,17 @@ void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper
                     }
                 }
 
-                buffer            += whisper_full_get_token_text(ctx, i, j);
-                probability_sum   += whisper_full_get_token_p   (ctx, i, j);
-                count++;
-                const int    col  = std::max(0, std::min((int) k_colors.size() - 1, (int) (std::pow(probability_sum/static_cast<float>(count), 3)*float(k_colors.size()))));
+                const char * text = whisper_full_get_token_text(ctx, i, j);
+                const float  p    = whisper_full_get_token_p   (ctx, i, j);
 
-                if (whisper_utf8_is_valid(buffer.c_str())) {
-                    printf("%s%s%s", k_colors[col].c_str(), buffer.c_str(), "\033[0m");
-                    buffer.clear();
-                    probability_sum = 0;
-                    count = 0;
-                }
+                const int col = std::max(0, std::min((int) k_colors.size() - 1, (int) (std::pow(p, 3)*float(k_colors.size()))));
+
+                printf("%s%s%s%s", speaker.c_str(), k_colors[col].c_str(), text, "\033[0m");
             }
         } else {
             const char * text = whisper_full_get_segment_text(ctx, i);
-            printf("%s", text);
+
+            printf("%s%s", speaker.c_str(), text);
         }
 
         if (params.tinydiarize) {
@@ -374,12 +359,8 @@ void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper
     }
 }
 
-bool output_txt(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
-    #if _WIN32
-        std::ofstream fout(console::UTF8toUTF16(fname));
-    #else
-        std::ofstream fout(fname);
-    #endif
+static bool output_txt(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
+    std::ofstream fout(fname);
     if (!fout.is_open()) {
         fprintf(stderr, "%s: failed to open '%s' for writing\n", __func__, fname);
         return false;
@@ -405,12 +386,8 @@ bool output_txt(struct whisper_context * ctx, const char * fname, const whisper_
     return true;
 }
 
-bool output_vtt(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
-    #if _WIN32
-        std::ofstream fout(console::UTF8toUTF16(fname));
-    #else
-        std::ofstream fout(fname);
-    #endif
+static bool output_vtt(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
+    std::ofstream fout(fname);
     if (!fout.is_open()) {
         fprintf(stderr, "%s: failed to open '%s' for writing\n", __func__, fname);
         return false;
@@ -441,12 +418,8 @@ bool output_vtt(struct whisper_context * ctx, const char * fname, const whisper_
     return true;
 }
 
-bool output_srt(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
-    #if _WIN32
-        std::ofstream fout(console::UTF8toUTF16(fname));
-    #else
-        std::ofstream fout(fname);
-    #endif
+static bool output_srt(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
+    std::ofstream fout(fname);
     if (!fout.is_open()) {
         fprintf(stderr, "%s: failed to open '%s' for writing\n", __func__, fname);
         return false;
@@ -474,7 +447,7 @@ bool output_srt(struct whisper_context * ctx, const char * fname, const whisper_
     return true;
 }
 
-char *escape_double_quotes_and_backslashes(const char *str) {
+static char * escape_double_quotes_and_backslashes(const char * str) {
     if (str == NULL) {
         return NULL;
     }
@@ -487,7 +460,7 @@ char *escape_double_quotes_and_backslashes(const char *str) {
         }
     }
 
-    char *escaped = (char *)calloc(escaped_length, 1); // pre-zeroed
+    char * escaped = (char *)calloc(escaped_length, 1); // pre-zeroed
     if (escaped == NULL) {
         return NULL;
     }
@@ -506,7 +479,7 @@ char *escape_double_quotes_and_backslashes(const char *str) {
 }
 
 // double quote should be escaped by another double quote. (rfc4180)
-char *escape_double_quotes_in_csv(const char *str) {
+static char * escape_double_quotes_in_csv(const char * str) {
     if (str == NULL) {
         return NULL;
     }
@@ -537,12 +510,8 @@ char *escape_double_quotes_in_csv(const char *str) {
     return escaped;
 }
 
-bool output_csv(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
-    #if _WIN32
-        std::ofstream fout(console::UTF8toUTF16(fname));
-    #else
-        std::ofstream fout(fname);
-    #endif
+static bool output_csv(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
+    std::ofstream fout(fname);
     if (!fout.is_open()) {
         fprintf(stderr, "%s: failed to open '%s' for writing\n", __func__, fname);
         return false;
@@ -576,12 +545,8 @@ bool output_csv(struct whisper_context * ctx, const char * fname, const whisper_
     return true;
 }
 
-bool output_score(struct whisper_context * ctx, const char * fname, const whisper_params & /*params*/, std::vector<std::vector<float>> /*pcmf32s*/) {
-    #if _WIN32
-        std::ofstream fout(console::UTF8toUTF16(fname));
-    #else
-        std::ofstream fout(fname);
-    #endif
+static bool output_score(struct whisper_context * ctx, const char * fname, const whisper_params & /*params*/, std::vector<std::vector<float>> /*pcmf32s*/) {
+    std::ofstream fout(fname);
     fprintf(stderr, "%s: saving output to '%s'\n", __func__, fname);
 
     const int n_segments = whisper_full_n_segments(ctx);
@@ -599,17 +564,13 @@ bool output_score(struct whisper_context * ctx, const char * fname, const whispe
     return true;
 }
 
-bool output_json(
+static bool output_json(
              struct whisper_context * ctx,
                          const char * fname,
                const whisper_params & params,
     std::vector<std::vector<float>>   pcmf32s,
                                bool   full) {
-    #if _WIN32
-        std::ofstream fout(console::UTF8toUTF16(fname));
-    #else
-        std::ofstream fout(fname);
-    #endif
+    std::ofstream fout(fname);
     int indent = 0;
 
     auto doindent = [&]() {
@@ -774,12 +735,8 @@ bool output_json(
 // karaoke video generation
 // outputs a bash script that uses ffmpeg to generate a video with the subtitles
 // TODO: font parameter adjustments
-bool output_wts(struct whisper_context * ctx, const char * fname, const char * fname_inp, const whisper_params & params, float t_sec, std::vector<std::vector<float>> pcmf32s) {
-    #if _WIN32
-        std::ofstream fout(console::UTF8toUTF16(fname));
-    #else
-        std::ofstream fout(fname);
-    #endif
+static bool output_wts(struct whisper_context * ctx, const char * fname, const char * fname_inp, const whisper_params & params, float t_sec, std::vector<std::vector<float>> pcmf32s) {
+    std::ofstream fout(fname);
 
     fprintf(stderr, "%s: saving output to '%s'\n", __func__, fname);
 
@@ -903,12 +860,8 @@ bool output_wts(struct whisper_context * ctx, const char * fname, const char * f
     return true;
 }
 
-bool output_lrc(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
-    #if _WIN32
-        std::ofstream fout(console::UTF8toUTF16(fname));
-    #else
-        std::ofstream fout(fname);
-    #endif
+static bool output_lrc(struct whisper_context * ctx, const char * fname, const whisper_params & params, std::vector<std::vector<float>> pcmf32s) {
+    std::ofstream fout(fname);
     if (!fout.is_open()) {
         fprintf(stderr, "%s: failed to open '%s' for writing\n", __func__, fname);
         return false;
@@ -948,10 +901,39 @@ bool output_lrc(struct whisper_context * ctx, const char * fname, const whisper_
 }
 
 
-void cb_log_disable(enum ggml_log_level , const char * , void * ) { }
+static void cb_log_disable(enum ggml_log_level , const char * , void * ) { }
 
-int run(int argc, const char ** argv) {
+int main(int argc, char ** argv) {
     whisper_params params;
+
+    // If the only argument starts with "@", read arguments line-by-line
+    // from the given file.
+    std::vector<std::string> vec_args;
+    if (argc == 2 && argv != nullptr && argv[1] != nullptr && argv[1][0] == '@') {
+        // Save the name of the executable.
+        vec_args.push_back(argv[0]);
+
+        // Open the response file.
+        char const * rspfile = argv[1] + sizeof(char);
+        std::ifstream fin(rspfile);
+        if (fin.is_open() == false) {
+            fprintf(stderr, "error: response file '%s' not found\n", rspfile);
+            return 1;
+        }
+
+        // Read the entire response file.
+        std::string line;
+        while (std::getline(fin, line)) {
+            vec_args.push_back(line);
+        }
+
+        // Use the contents of the response file as the command-line arguments.
+        argc = static_cast<int>(vec_args.size());
+        argv = static_cast<char **>(alloca(argc * sizeof (char *)));
+        for (int i = 0; i < argc; ++i) {
+            argv[i] = const_cast<char *>(vec_args[i].c_str());
+        }
+    }
 
     if (whisper_params_parse(argc, argv, params) == false) {
         whisper_print_usage(argc, argv, params);
@@ -1015,6 +997,7 @@ int run(int argc, const char ** argv) {
         if (params.dtw == "large.v1")  cparams.dtw_aheads_preset = WHISPER_AHEADS_LARGE_V1;
         if (params.dtw == "large.v2")  cparams.dtw_aheads_preset = WHISPER_AHEADS_LARGE_V2;
         if (params.dtw == "large.v3")  cparams.dtw_aheads_preset = WHISPER_AHEADS_LARGE_V3;
+        if (params.dtw == "large.v3.turbo")  cparams.dtw_aheads_preset = WHISPER_AHEADS_LARGE_V3_TURBO;
 
         if (cparams.dtw_aheads_preset == WHISPER_AHEADS_NONE) {
             fprintf(stderr, "error: unknown DTW preset '%s'\n", params.dtw.c_str());
@@ -1119,8 +1102,7 @@ int run(int argc, const char ** argv) {
             wparams.token_timestamps = params.output_wts || params.output_jsn_full || params.max_len > 0;
             wparams.thold_pt         = params.word_thold;
             wparams.max_len          = params.output_wts && params.max_len == 0 ? 60 : params.max_len;
-          
-            wparams.heuristic        = params.heuristic;
+            wparams.split_on_word    = params.split_on_word;
             wparams.audio_ctx        = params.audio_ctx;
 
             wparams.debug_mode       = params.debug_mode;
@@ -1139,10 +1121,8 @@ int run(int argc, const char ** argv) {
 
             wparams.entropy_thold    = params.entropy_thold;
             wparams.logprob_thold    = params.logprob_thold;
-            wparams.no_speech_thold  = params.no_speech_thold;
 
             wparams.no_timestamps    = params.no_timestamps;
-            wparams.suppress_non_speech_tokens = params.suppress_nst;
 
             whisper_print_user_data user_data = { &params, &pcmf32s, 0 };
 
@@ -1262,55 +1242,4 @@ int run(int argc, const char ** argv) {
     whisper_free(ctx);
 
     return 0;
-}
-
-// Platform-specific function to convert UTF-16 to UTF-8
-#ifdef _WIN32
-std::string UTF16toUTF8(const wchar_t* utf16str) {
-    return console::UTF16toUTF8(utf16str);
-}
-#define MAIN wmain
-#define CHAR_TYPE const wchar_t
-#else
-#define MAIN main
-#define CHAR_TYPE const char
-#endif
-
-int MAIN(int argc, CHAR_TYPE** argv) {
-    console::init(true, true);
-    atexit([]() { console::cleanup(); });
-
-#ifdef _WIN32
-    auto convert_to_utf8 = UTF16toUTF8;
-#else
-    auto convert_to_utf8 = [](const char* str) { return std::string(str); };
-#endif
-
-    std::vector<std::string> args;
-    if (argc == 2 && argv != nullptr && argv[1] != nullptr && convert_to_utf8(argv[1])[0] == '@') {
-        args.push_back(convert_to_utf8(argv[0]));
-        const char* rspfile = convert_to_utf8(argv[1]).c_str() + 1; // skip '@'
-        std::ifstream fin(rspfile);
-
-        if (!fin.is_open()) {
-            fprintf(stderr, "error: response file '%s' not found\n", rspfile);
-            return 1;
-        }
-
-        std::string line;
-        while (std::getline(fin, line)) {
-            args.push_back(line);
-        }
-    } else {
-        for (int i = 0; i < argc; ++i) {
-            args.push_back(convert_to_utf8(argv[i]));
-        }
-    }
-
-    std::vector<const char*> argv_converted(args.size());
-    for (size_t i = 0; i < args.size(); ++i) {
-        argv_converted[i] = args[i].c_str();
-    }
-
-    return run(static_cast<int>(args.size()), argv_converted.data());
 }

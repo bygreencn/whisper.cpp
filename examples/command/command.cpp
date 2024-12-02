@@ -8,7 +8,6 @@
 
 #include "common-sdl.h"
 #include "common.h"
-#include "console.h"
 #include "whisper.h"
 #include "grammar-parser.h"
 
@@ -58,9 +57,9 @@ struct whisper_params {
     std::string suppress_regex;
 };
 
-void whisper_print_usage(int argc, const char ** argv, const whisper_params & params);
+void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
-bool whisper_params_parse(int argc, const char ** argv, whisper_params & params) {
+static bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -100,7 +99,7 @@ bool whisper_params_parse(int argc, const char ** argv, whisper_params & params)
     return true;
 }
 
-void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params & params) {
+void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params) {
     fprintf(stderr, "\n");
     fprintf(stderr, "usage: %s [options]\n", argv[0]);
     fprintf(stderr, "\n");
@@ -131,7 +130,7 @@ void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params 
     fprintf(stderr, "\n");
 }
 
-std::string transcribe(
+static std::string transcribe(
                  whisper_context * ctx,
             const whisper_params & params,
         const std::vector<float> & pcmf32,
@@ -217,7 +216,7 @@ std::string transcribe(
     return result;
 }
 
-std::vector<std::string> read_allowed_commands(const std::string & fname) {
+static std::vector<std::string> read_allowed_commands(const std::string & fname) {
     std::vector<std::string> allowed_commands;
 
     std::ifstream ifs(fname);
@@ -239,7 +238,7 @@ std::vector<std::string> read_allowed_commands(const std::string & fname) {
     return allowed_commands;
 }
 
-std::vector<std::string> get_words(const std::string &txt) {
+static std::vector<std::string> get_words(const std::string &txt) {
     std::vector<std::string> words;
 
     std::istringstream iss(txt);
@@ -253,7 +252,7 @@ std::vector<std::string> get_words(const std::string &txt) {
 
 // command-list mode
 // guide the transcription to match the most likely command from a provided list
-int process_command_list(struct whisper_context * ctx, audio_async &audio, const whisper_params &params) {
+static int process_command_list(struct whisper_context * ctx, audio_async &audio, const whisper_params &params) {
     fprintf(stderr, "\n");
     fprintf(stderr, "%s: guided mode\n", __func__);
 
@@ -464,7 +463,7 @@ int process_command_list(struct whisper_context * ctx, audio_async &audio, const
 
 // always-prompt mode
 // transcribe the voice into text after valid prompt
-int always_prompt_transcription(struct whisper_context * ctx, audio_async & audio, const whisper_params & params) {
+static int always_prompt_transcription(struct whisper_context * ctx, audio_async & audio, const whisper_params & params) {
     bool is_running = true;
     bool ask_prompt = true;
 
@@ -544,7 +543,7 @@ int always_prompt_transcription(struct whisper_context * ctx, audio_async & audi
 
 // general-purpose mode
 // freely transcribe the voice into text
-int process_general_transcription(struct whisper_context * ctx, audio_async & audio, const whisper_params & params) {
+static int process_general_transcription(struct whisper_context * ctx, audio_async & audio, const whisper_params & params) {
     bool is_running  = true;
     bool have_prompt = false;
     bool ask_prompt  = true;
@@ -679,7 +678,7 @@ int process_general_transcription(struct whisper_context * ctx, audio_async & au
     return 0;
 }
 
-int run(int argc, const char ** argv) {
+int main(int argc, char ** argv) {
     whisper_params params;
 
     if (whisper_params_parse(argc, argv, params) == false) {
@@ -776,23 +775,3 @@ int run(int argc, const char ** argv) {
 
     return ret_val;
 }
-
-#if _WIN32
-int wmain(int argc, const wchar_t ** argv_UTF16LE) {
-    console::init(true, true);
-    atexit([]() { console::cleanup(); });
-    std::vector<std::string> buffer(argc);
-    std::vector<const char*> argv_UTF8(argc);
-    for (int i = 0; i < argc; ++i) {
-        buffer[i] = console::UTF16toUTF8(argv_UTF16LE[i]);
-        argv_UTF8[i] = buffer[i].c_str();
-    }
-    return run(argc, argv_UTF8.data());
-}
-#else
-int main(int argc, const char ** argv_UTF8) {
-    console::init(true, true);
-    atexit([]() { console::cleanup(); });
-    return run(argc, argv_UTF8);
-}
-#endif

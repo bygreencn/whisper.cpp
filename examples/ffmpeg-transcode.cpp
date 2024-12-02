@@ -204,8 +204,6 @@ static int decode_audio(struct audio_buffer *audio_buf, s16 **data, int *size)
     const size_t errbuffsize = 1024;
     char errbuff[errbuffsize];
 
-    av_register_all(); // from avformat. Still a must-have call for ffmpeg v3! (can be skipped for later versions)
-
     fmt_ctx = avformat_alloc_context();
     avio_ctx_buffer = (u8*)av_malloc(AVIO_CTX_BUF_SZ);
     LOG("Creating an avio context: AVIO_CTX_BUF_SZ=%d\n", AVIO_CTX_BUF_SZ);
@@ -321,7 +319,7 @@ int ffmpeg_decode_audio(const std::string &ifname, std::vector<uint8_t>& owav_da
         LOG("Couldn't map input file %s\n", ifname.c_str());
         return err;
     }
-    LOG("Mapped input file: %x size: %d\n", ibuf, ibuf_size);
+    LOG("Mapped input file: %s size: %d\n", ibuf, (int) ibuf_size);
     struct audio_buffer inaudio_buf;
     inaudio_buf.ptr = ibuf;
     inaudio_buf.size = ibuf_size;
