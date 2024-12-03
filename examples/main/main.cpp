@@ -94,7 +94,7 @@ struct whisper_params {
     grammar_parser::parse_state grammar_parsed;
 };
 
-static void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
+void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
 static char * whisper_param_turn_lowercase(char * in){
     int string_len = strlen(in);
@@ -182,7 +182,7 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
     return true;
 }
 
-static void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params) {
+void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params) {
     fprintf(stderr, "\n");
     fprintf(stderr, "usage: %s [options] file0.wav file1.wav ...\n", argv[0]);
     fprintf(stderr, "\n");

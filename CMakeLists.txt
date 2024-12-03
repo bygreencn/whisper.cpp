@@ -142,13 +142,13 @@ set(WHISPER_BUILD_COMMIT        ${BUILD_COMMIT})
 set(WHISPER_INSTALL_VERSION     ${CMAKE_PROJECT_VERSION})
 
 set(WHISPER_INCLUDE_INSTALL_DIR ${CMAKE_INSTALL_INCLUDEDIR} CACHE PATH "Location of header  files")
-    unicode.h
 set(WHISPER_LIB_INSTALL_DIR     ${CMAKE_INSTALL_LIBDIR}     CACHE PATH "Location of library files")
 set(WHISPER_BIN_INSTALL_DIR     ${CMAKE_INSTALL_BINDIR}     CACHE PATH "Location of binary  files")
 
 get_directory_property(WHISPER_TRANSIENT_DEFINES COMPILE_DEFINITIONS)
 
 set_target_properties(whisper PROPERTIES PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/whisper.h)
+set_target_properties(whisper PROPERTIES COMPILE_FLAGS "/wd4819")
 install(TARGETS whisper LIBRARY PUBLIC_HEADER)
 
 configure_package_config_file(

@@ -4,7 +4,6 @@
 //
 #include "common-portaudio.h"
 #include "common.h"
-#include "console.h"
 #include "whisper.h"
 
 #include <cassert>
@@ -28,34 +27,18 @@ void exit_handler(int signo) {
     is_running = false;
 }
 
-
-//  500 -> 00:05.000
-// 6000 -> 01:00.000
-/*
-std::string to_timestamp(int64_t t) {
-    int64_t sec = t/100;
-    int64_t msec = t - sec*100;
-    int64_t min = sec/60;
-    sec = sec - min*60;
-
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%02d:%02d.%03d", (int) min, (int) sec, (int) msec);
-
-    return std::string(buf);
-}
-*/
 // command-line parameters
 struct whisper_params {
     int32_t n_threads  = std::min(2, (int32_t) std::thread::hardware_concurrency());
-    double step_s    = 15;
-    double length_s  = 30;
+    double step_s    = 3;
+    double length_s  = 15;
     double keep_s    = 0.0;
     int32_t capture_id = 10;
     int32_t max_tokens = 32;
     int32_t audio_ctx  = 768;
 
-    float vad_thold    = 0.5f;
-    float freq_thold   = 200.0f;
+    float vad_thold    = 0.6f;
+    float freq_thold   = 100.0f;
 
     bool translate     = false;
     bool no_fallback   = true;
@@ -73,9 +56,9 @@ struct whisper_params {
     bool enable_rnnoise = true;
 };
 
-void whisper_print_usage(int argc, const char ** argv, const whisper_params & params);
+void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
-bool whisper_params_parse(int argc, const char ** argv, whisper_params & params) {
+static bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -115,7 +98,7 @@ bool whisper_params_parse(int argc, const char ** argv, whisper_params & params)
     return true;
 }
 
-void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params & params) {
+void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params) {
     fprintf(stderr, "\n");
     fprintf(stderr, "usage: %s [options]\n", argv[0]);
     fprintf(stderr, "\n");
@@ -145,16 +128,15 @@ void whisper_print_usage(int /*argc*/, const char ** argv, const whisper_params 
     fprintf(stderr, "\n");
 }
 
-int run(int argc, const char ** argv) {
+int main(int argc, char ** argv) {
 
     signal(SIGINT, exit_handler);
 
     whisper_params params;
-    if (whisper_params_parse(argc, argv, params) == false) {
+
+   if (whisper_params_parse(argc, argv, params) == false) {
         return 1;
     }
-
-
 
     params.keep_s   = std::min(params.keep_s,   params.step_s);
     params.length_s = std::max(params.length_s, params.step_s);
@@ -196,7 +178,7 @@ int run(int argc, const char ** argv) {
 
     struct whisper_context_params cparams = whisper_context_default_params();
 
-    cparams.use_gpu = params.use_gpu;
+    cparams.use_gpu    = params.use_gpu;
     cparams.flash_attn = params.flash_attn;
 
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
@@ -453,8 +435,6 @@ int run(int argc, const char ** argv) {
             fflush(stdout);
         }
     }
-	
-	
 
     audio.pause();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -467,23 +447,3 @@ int run(int argc, const char ** argv) {
 
     return 0;
 }
-
-#if _WIN32
-int wmain(int argc, const wchar_t ** argv_UTF16LE) {
-    console::init(true, true);
-    atexit([]() { console::cleanup(); });
-    std::vector<std::string> buffer(argc);
-    std::vector<const char*> argv_UTF8(argc);
-    for (int i = 0; i < argc; ++i) {
-        buffer[i] = console::UTF16toUTF8(argv_UTF16LE[i]);
-        argv_UTF8[i] = buffer[i].c_str();
-    }
-    return run(argc, argv_UTF8.data());
-}
-#else
-int main(int argc, const char ** argv_UTF8) {
-    console::init(true, true);
-    atexit([]() { console::cleanup(); });
-    return run(argc, argv_UTF8);
-}
-#endif

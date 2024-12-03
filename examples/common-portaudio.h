@@ -33,15 +33,13 @@ using namespace std;
 #include <vector>
 #include <mutex>
 #include <condition_variable>
-#include <cstring>  // 用于memcpy
-
+#include <cstring>  
 
 template <typename T>
 class CircularQueue {
 public:
     explicit CircularQueue(size_t capacity) : capacity_(capacity), queue_(capacity){}
 
-    // 阻塞连续块写入
 public:
     bool enqueue(const void* pdata, size_t blockSize) {
         int retry = 2;
@@ -51,11 +49,10 @@ public:
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
 
-        // 使用lambda函数来判断容量是否足够
+        // use lambda function detect capacity
         auto isCapacityEnough = [&]() {
             return ((capacity_-size_) >= blockSize);
         };
-
 
         volatile bool status = conditionVariable_.wait_for(lock, std::chrono::microseconds(100), isCapacityEnough);
 
@@ -66,15 +63,12 @@ public:
             return false;
         }
 
-        // 执行连续写入
         size_t remainingSpace = capacity_ - writeIndex_;
         size_t dataSize = blockSize * sizeof(T);
 
         if (dataSize <= remainingSpace * sizeof(T)) {
-            // 数据不跨越队列尾部
             std::memcpy(&queue_[writeIndex_], pdata, dataSize);
         } else {
-            // 数据跨越队列尾部
             size_t firstPartSize = remainingSpace * sizeof(T);
             std::memcpy(&queue_[writeIndex_], (char *)pdata, firstPartSize);
 
@@ -89,12 +83,12 @@ public:
         //std::cout << "After enqueue" << std::endl;
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
-        conditionVariable_.notify_one();  // 通知读取线程数据已经可用
+        conditionVariable_.notify_one();  
 
         return true;
     }
 
-    // 阻塞连续块读出
+
     bool dequeue(void* pdata, size_t blockSize) {
         std::unique_lock<std::mutex> lock(mutex_);
 
@@ -102,7 +96,7 @@ public:
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
 
-        // 使用lambda函数来判断容量是否足够
+        // use lambda function detect capacity
         auto isCapacityEnough = [&]() {
             return size_ >= blockSize;
         };
@@ -115,15 +109,12 @@ public:
             return false;
         }
 
-
         size_t remainingData = capacity_ - readIndex_;
         size_t dataSize = blockSize * sizeof(T);
 
         if (dataSize <= remainingData * sizeof(T)) {
-            // 数据不跨越队列尾部
             std::memcpy((char *)pdata, &queue_[readIndex_], dataSize);
         } else {
-            // 数据跨越队列尾部
             size_t firstPartSize = remainingData * sizeof(T);
             std::memcpy((char *)pdata, &queue_[readIndex_], firstPartSize);
 
@@ -138,24 +129,21 @@ public:
         //std::cout << "After dequeue" << std::endl;
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
-        conditionVariable_.notify_one();  // 通知写入线程队列有足够空间
+        conditionVariable_.notify_one();  
 
         return true;
     }
 
-    // 判断队列是否为空
     bool empty() {
         std::unique_lock<std::mutex> lock(mutex_);
         return size_ == 0;
     }
 
-    // 判断队列是否已满
     bool full() {
         std::unique_lock<std::mutex> lock(mutex_);
         return size_ == capacity_;
     }
 
-    // 获取队列中元素的数量
     size_t size() {
         std::unique_lock<std::mutex> lock(mutex_);
         return size_;
