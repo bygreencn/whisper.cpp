@@ -4657,7 +4657,6 @@ struct whisper_full_params whisper_full_default_params(enum whisper_sampling_str
         /*.thold_pt          =*/ 0.01f,
         /*.thold_ptsum       =*/ 0.01f,
         /*.max_len           =*/ 0,
-        /*.split_on_word     =*/ false,
         /*.max_tokens        =*/ 0,
 
         /*.debug_mode        =*/ false,
@@ -4715,6 +4714,8 @@ struct whisper_full_params whisper_full_default_params(enum whisper_sampling_str
         /*.n_grammar_rules =*/ 0,
         /*.i_start_rule    =*/ 0,
         /*.grammar_penalty =*/ 100.0f,
+
+        /*.split_on_word     =*/ false
     };
 
     switch (strategy) {

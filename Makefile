@@ -148,6 +148,8 @@ else
 	# talk (TODO: disalbed)
 endif
 
+BUILD_TARGETS += stream-portaudio
+
 default: $(BUILD_TARGETS)
 
 test: $(TEST_TARGETS)
@@ -826,7 +828,10 @@ OBJ_COMMON += \
 OBJ_SDL += \
 	examples/common-sdl.o
 
-OBJ_ALL = $(OBJ_GGML) $(OBJ_WHISPER) $(OBJ_COMMON) $(OBJ_SDL)
+OBJ_PORTAUDIO += \
+	examples/common-portaudio.o
+
+OBJ_ALL = $(OBJ_GGML) $(OBJ_WHISPER) $(OBJ_COMMON) $(OBJ_SDL) $(OBJ_PORTAUDIO)
 
 LIB_GGML   = $(LIB_PRE)ggml$(DSO_EXT)
 LIB_GGML_S = $(LIB_PRE)ggml.a
@@ -840,8 +845,11 @@ LIB_COMMON_S = $(LIB_PRE)common.a
 LIB_COMMON_SDL   = $(LIB_PRE)common-sdl$(DSO_EXT)
 LIB_COMMON_SDL_S = $(LIB_PRE)common-sdl.a
 
-LIB_ALL   = $(LIB_GGML)   $(LIB_WHISPER)   $(LIB_COMMON)   $(LIB_COMMON_SDL)
-LIB_ALL_S = $(LIB_GGML_S) $(LIB_WHISPER_S) $(LIB_COMMON_S) $(LIB_COMMON_SDL_S)
+LIB_COMMON_PORTAUDIO   = $(LIB_PRE)common-portaudio$(DSO_EXT)
+LIB_COMMON_PORTAUDIO_S = $(LIB_PRE)common-portaudio.a
+
+LIB_ALL   = $(LIB_GGML)   $(LIB_WHISPER)   $(LIB_COMMON)   $(LIB_COMMON_SDL) $(LIB_COMMON_PORTAUDIO)
+LIB_ALL_S = $(LIB_GGML_S) $(LIB_WHISPER_S) $(LIB_COMMON_S) $(LIB_COMMON_SDL_S) $(LIB_COMMON_PORTAUDIO_S)
 
 GF_CC := $(CC)
 include scripts/get-flags.mk
@@ -930,8 +938,11 @@ LIB_COMMON_S = libcommon.a
 LIB_COMMON_SDL   = libcommon-sdl.so
 LIB_COMMON_SDL_S = libcommon-sdl.a
 
+LIB_COMMON_PORTAUDIO   = libcommon-portaudio.so
+LIB_COMMON_PORTAUDIO_S = libcommon-portaudio.a
+
 # Targets
-BUILD_TARGETS += $(LIB_GGML) $(LIB_GGML_S) $(LIB_LLAMA) $(LIB_LLAMA_S) $(LIB_COMMON) $(LIB_COMMON_S)
+BUILD_TARGETS += $(LIB_GGML) $(LIB_GGML_S) $(LIB_LLAMA) $(LIB_LLAMA_S) $(LIB_COMMON) $(LIB_COMMON_S) $(LIB_COMMON_PORTAUDIO_S)
 
 # Dependency files
 DEP_FILES = $(OBJ_GGML:.o=.d) $(OBJ_LLAMA:.o=.d) $(OBJ_COMMON:.o=.d)
@@ -986,6 +997,13 @@ examples/common-sdl.o: \
 	examples/common-sdl.cpp \
 	examples/common-sdl.h
 	$(CXX) $(CXXFLAGS) $(CFLAGS_SDL) -c $< -o $@
+
+# common-portaudio
+
+examples/common-portaudio.o: \
+	examples/common-portaudio.cpp \
+	examples/common-portaudio.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(LIB_COMMON): $(OBJ_COMMON) $(LIB_LLAMA) $(LIB_GGML)
 	$(CXX) $(CXXFLAGS) -shared -fPIC -o $@ $^ $(LDFLAGS)
@@ -1043,6 +1061,11 @@ stream: examples/stream/stream.cpp \
 	$(OBJ_GGML) $(OBJ_WHISPER) $(OBJ_COMMON) $(OBJ_SDL)
 	$(CXX) $(CXXFLAGS) $(CFLAGS_SDL) -c $< -o $(call GET_OBJ_FILE, $<)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS) $(LDFLAGS_SDL)
+
+stream-portaudio: examples/stream-portaudio/stream-portaudio.cpp \
+	$(OBJ_GGML) $(OBJ_WHISPER) $(OBJ_COMMON) $(OBJ_PORTAUDIO)
+	$(CXX) $(CXXFLAGS) -c $< -o $(call GET_OBJ_FILE, $<)
+	$(CXX) $(CXXFLAGS) $(filter-out %.h $<,$^) $(call GET_OBJ_FILE, $<) -o $@ $(LDFLAGS)
 
 lsp: examples/lsp/lsp.cpp \
 	$(OBJ_GGML) $(OBJ_WHISPER) $(OBJ_COMMON) $(OBJ_SDL)

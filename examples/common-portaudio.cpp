@@ -20,8 +20,9 @@ audio_async::audio_async()
     m_pInParamsRecord(NULL),
     m_pParamsRecord(NULL),
     m_pStreamRecord(NULL),
-    m_running(false){
-    m_pAudioBuffer = new AudioBuffer<float>((size_t)(OUTPOUT_SAMPLE_RATE * 300));
+    m_running(false),
+    m_pAudioBuffer(NULL)
+{
     m_psys = &portaudio::System::instance();
 }
 
@@ -48,7 +49,7 @@ audio_async::~audio_async() {
     }
 }
 
-bool audio_async::init(int iInputDevice, uint8_t save_audio){
+bool audio_async::init(int iInputDevice, uint8_t save_audio, bool enable_rnnoise){
 
     try
 	{
@@ -82,6 +83,10 @@ bool audio_async::init(int iInputDevice, uint8_t save_audio){
             std::cout << strDetails.c_str() << std::endl;
         }
 #endif
+        m_pAudioBuffer = new AudioBuffer<float>((size_t)(OUTPOUT_SAMPLE_RATE * 300), enable_rnnoise);
+        
+        if (NULL == m_pAudioBuffer)
+            return false;
    
         m_pAudioBuffer->setSaveAudioFlag(save_audio);
 

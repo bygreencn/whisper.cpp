@@ -5,14 +5,18 @@
 #include "common-portaudio.h"
 #include "common.h"
 #include "whisper.h"
-#include <signal.h>
+
 #include <cassert>
 #include <cstdio>
 #include <string>
 #include <thread>
 #include <vector>
 #include <fstream>
+#include <signal.h>
 #include <sndfile.h>
+
+
+//#define USE_SILERO_VAD
 
 
 static bool is_running = true;
@@ -23,22 +27,6 @@ void exit_handler(int signo) {
     is_running = false;
 }
 
-
-//  500 -> 00:05.000
-// 6000 -> 01:00.000
-/*
-std::string to_timestamp(int64_t t) {
-    int64_t sec = t/100;
-    int64_t msec = t - sec*100;
-    int64_t min = sec/60;
-    sec = sec - min*60;
-
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%02d:%02d.%03d", (int) min, (int) sec, (int) msec);
-
-    return std::string(buf);
-}
-*/
 // command-line parameters
 struct whisper_params {
     int32_t n_threads  = std::min(2, (int32_t) std::thread::hardware_concurrency());
@@ -61,15 +49,17 @@ struct whisper_params {
     bool tinydiarize   = false;
     uint8_t save_audio    = 0; // save audio to wav file
     bool use_gpu       = false;
+    bool flash_attn    = false;
 
     std::string language  = "zh";
-    std::string model     = "ggml-base-q5_1.bin";
+    std::string model     = "models/ggml-base-q5_1.bin";
     std::string fname_out;
+    bool enable_rnnoise = true;
 };
 
 void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
 
-bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
+static bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
@@ -97,6 +87,8 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
         else if (arg == "-tdrz" || arg == "--tinydiarize")   { params.tinydiarize   = true; }
         else if (arg == "-sa"   || arg == "--save-audio")    { params.save_audio    = std::stoi(argv[++i]); }
         else if (arg == "-ng"   || arg == "--no-gpu")        { params.use_gpu       = false; }
+        else if (arg == "-fa"   || arg == "--flash-attn")    { params.flash_attn    = true; }
+        else if (arg == "-nr"   || arg == "--no-rnnoise")    { params.enable_rnnoise = false; }
 
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
@@ -134,6 +126,8 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -tdrz,    --tinydiarize   [%-7s] enable tinydiarize (requires a tdrz model)\n",     params.tinydiarize ? "true" : "false");
     fprintf(stderr, "  -sa,      --save-audio    [%-7x] save the recorded audio to a file\n",              params.save_audio);
     fprintf(stderr, "  -ng,      --no-gpu        [%-7s] disable GPU inference\n",                          params.use_gpu ? "false" : "true");
+    fprintf(stderr, "  -fa,      --flash-attn    [%-7s] flash attention during inference\n",               params.flash_attn ? "true" : "false");
+    fprintf(stderr, "  -nr,      --no-rnnoise    [%-7s] disable RNNoise\n",                                params.enable_rnnoise ? "true" : "false");
     fprintf(stderr, "\n");
 }
 
@@ -142,11 +136,10 @@ int main(int argc, char ** argv) {
     signal(SIGINT, exit_handler);
 
     whisper_params params;
-    if (whisper_params_parse(argc, argv, params) == false) {
+
+   if (whisper_params_parse(argc, argv, params) == false) {
         return 1;
     }
-
-
 
     params.keep_s   = std::min(params.keep_s,   params.step_s);
     params.length_s = std::max(params.length_s, params.step_s);
@@ -168,14 +161,15 @@ int main(int argc, char ** argv) {
     // init audio
 
     audio_async audio;
-    if (!audio.init(params.capture_id, params.save_audio)) {
+    if (!audio.init(params.capture_id, params.save_audio, params.enable_rnnoise)) {
         printf("%s: audio.init() failed!\n", __func__);
         return 1;
     }
 
     // init silero vad
+#ifdef USE_SILERO_VAD
     VadIterator silero_vad(L"silero_vad.onnx");
-
+#endif
     audio.resume();
 
     // whisper init
@@ -185,8 +179,10 @@ int main(int argc, char ** argv) {
         exit(0);
     }
 
-    struct whisper_context_params cparams;
-    cparams.use_gpu = params.use_gpu;
+    struct whisper_context_params cparams = whisper_context_default_params();
+
+    cparams.use_gpu    = params.use_gpu;
+    cparams.flash_attn = params.flash_attn;
 
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
 
@@ -294,8 +290,12 @@ int main(int argc, char ** argv) {
             {
                 if (false == audio.get((int)(n_samples_len), pcmf32_new))
                     continue;
+#ifdef USE_SILERO_VAD
                 silero_vad.process(pcmf32_new, pcmf32_old);
                 pcmf32.insert(pcmf32.end(), pcmf32_old.begin(), pcmf32_old.end());
+#else
+                pcmf32.insert(pcmf32.end(), pcmf32_new.begin(), pcmf32_new.end());
+#endif
                 if (pcmf32.size() >= vadleast_n_samples_len)
                     break;
             }
@@ -426,6 +426,7 @@ int main(int argc, char ** argv) {
                 // Add tokens of the last full length segment as the prompt
                 if (!params.no_context) {
                     prompt_tokens.clear();
+
                     const int n_segments = whisper_full_n_segments(ctx);
                     for (int i = 0; i < n_segments; ++i) {
                         const int token_count = whisper_full_n_tokens(ctx, i);
@@ -438,8 +439,6 @@ int main(int argc, char ** argv) {
             fflush(stdout);
         }
     }
-	
-	
 
     audio.pause();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));

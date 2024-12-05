@@ -75,13 +75,12 @@ option(WHISPER_BUILD_EXAMPLES "whisper: build examples"       ${WHISPER_STANDALO
 option(WHISPER_BUILD_SERVER   "whisper: build server example" ${WHISPER_STANDALONE})
 
 # 3rd party libs
-option(WHISPER_CURL "whisper: use libcurl to download model from an URL" OFF)
-option(WHISPER_SDL2 "whisper: support for libSDL2" OFF)
-option(WHISPER_portaudio              "whisper: support for portaudio" OFF)
-option(WHISPER_portaudiocpp           "whisper: support for portaudiocpp" OFF)
-option(WHISPER_SampleRate             "whisper: support for libSampleRate" OFF)
-option(WHISPER_sndfile                "whisper: support for libsndfile" OFF)
-
+option(WHISPER_CURL         "whisper: use libcurl to download model from an URL" OFF)
+option(WHISPER_SDL2         "whisper: support for libSDL2" OFF)
+option(WHISPER_portaudio    "whisper: support for portaudio" OFF)
+option(WHISPER_portaudiocpp "whisper: support for portaudiocpp" OFF)
+option(WHISPER_SampleRate   "whisper: support for libSampleRate" OFF)
+option(WHISPER_sndfile      "whisper: support for libsndfile" OFF)
 
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     option(WHISPER_FFMPEG "whisper: support building and linking with ffmpeg libs (avcodec, swresample, ...)" OFF)

@@ -33,15 +33,13 @@ using namespace std;
 #include <vector>
 #include <mutex>
 #include <condition_variable>
-#include <cstring>  // 用于memcpy
-
+#include <cstring>  
 
 template <typename T>
 class CircularQueue {
 public:
     explicit CircularQueue(size_t capacity) : capacity_(capacity), queue_(capacity){}
 
-    // 阻塞连续块写入
 public:
     bool enqueue(const void* pdata, size_t blockSize) {
         int retry = 2;
@@ -51,11 +49,10 @@ public:
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
 
-        // 使用lambda函数来判断容量是否足够
+        // use lambda function detect capacity
         auto isCapacityEnough = [&]() {
             return ((capacity_-size_) >= blockSize);
         };
-
 
         volatile bool status = conditionVariable_.wait_for(lock, std::chrono::microseconds(100), isCapacityEnough);
 
@@ -66,15 +63,12 @@ public:
             return false;
         }
 
-        // 执行连续写入
         size_t remainingSpace = capacity_ - writeIndex_;
         size_t dataSize = blockSize * sizeof(T);
 
         if (dataSize <= remainingSpace * sizeof(T)) {
-            // 数据不跨越队列尾部
             std::memcpy(&queue_[writeIndex_], pdata, dataSize);
         } else {
-            // 数据跨越队列尾部
             size_t firstPartSize = remainingSpace * sizeof(T);
             std::memcpy(&queue_[writeIndex_], (char *)pdata, firstPartSize);
 
@@ -89,12 +83,12 @@ public:
         //std::cout << "After enqueue" << std::endl;
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
-        conditionVariable_.notify_one();  // 通知读取线程数据已经可用
+        conditionVariable_.notify_one();  
 
         return true;
     }
 
-    // 阻塞连续块读出
+
     bool dequeue(void* pdata, size_t blockSize) {
         std::unique_lock<std::mutex> lock(mutex_);
 
@@ -102,7 +96,7 @@ public:
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
 
-        // 使用lambda函数来判断容量是否足够
+        // use lambda function detect capacity
         auto isCapacityEnough = [&]() {
             return size_ >= blockSize;
         };
@@ -115,15 +109,12 @@ public:
             return false;
         }
 
-
         size_t remainingData = capacity_ - readIndex_;
         size_t dataSize = blockSize * sizeof(T);
 
         if (dataSize <= remainingData * sizeof(T)) {
-            // 数据不跨越队列尾部
             std::memcpy((char *)pdata, &queue_[readIndex_], dataSize);
         } else {
-            // 数据跨越队列尾部
             size_t firstPartSize = remainingData * sizeof(T);
             std::memcpy((char *)pdata, &queue_[readIndex_], firstPartSize);
 
@@ -138,24 +129,21 @@ public:
         //std::cout << "After dequeue" << std::endl;
         //std::cout << readIndex_ << " " << writeIndex_ << std::endl;
         //std::cout << size_ << std::endl;
-        conditionVariable_.notify_one();  // 通知写入线程队列有足够空间
+        conditionVariable_.notify_one();  
 
         return true;
     }
 
-    // 判断队列是否为空
     bool empty() {
         std::unique_lock<std::mutex> lock(mutex_);
         return size_ == 0;
     }
 
-    // 判断队列是否已满
     bool full() {
         std::unique_lock<std::mutex> lock(mutex_);
         return size_ == capacity_;
     }
 
-    // 获取队列中元素的数量
     size_t size() {
         std::unique_lock<std::mutex> lock(mutex_);
         return size_;
@@ -336,7 +324,7 @@ private:
         // The method should be called in each thread/proc in multi-thread/proc work
         session_options.SetIntraOpNumThreads(intra_threads);
         session_options.SetInterOpNumThreads(inter_threads);
-        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
     };
 
     void init_onnx_model(const std::wstring& model_path)
@@ -350,8 +338,7 @@ private:
     void reset_states()
     {
         // Call reset before each audio start
-        std::memset(_h.data(), 0, _h.size() * sizeof(float));
-        std::memset(_c.data(), 0, _c.size() * sizeof(float));
+        std::memset(_state.data(), 0, _state.size() * sizeof(float));
         triggered = false;
         temp_end = 0;
         current_sample = 0;
@@ -362,39 +349,34 @@ private:
         current_speech = timestamp_t();
     };
 
-    void predict(const std::vector<float>& data)
+    void predict(const std::vector<float> &data)
     {
         // Infer
         // Create ort tensors
         input.assign(data.begin(), data.end());
         Ort::Value input_ort = Ort::Value::CreateTensor<float>(
             memory_info, input.data(), input.size(), input_node_dims, 2);
+        Ort::Value state_ort = Ort::Value::CreateTensor<float>(
+            memory_info, _state.data(), _state.size(), state_node_dims, 3);
         Ort::Value sr_ort = Ort::Value::CreateTensor<int64_t>(
             memory_info, sr.data(), sr.size(), sr_node_dims, 1);
-        Ort::Value h_ort = Ort::Value::CreateTensor<float>(
-            memory_info, _h.data(), _h.size(), hc_node_dims, 3);
-        Ort::Value c_ort = Ort::Value::CreateTensor<float>(
-            memory_info, _c.data(), _c.size(), hc_node_dims, 3);
 
         // Clear and add inputs
         ort_inputs.clear();
         ort_inputs.emplace_back(std::move(input_ort));
+        ort_inputs.emplace_back(std::move(state_ort));
         ort_inputs.emplace_back(std::move(sr_ort));
-        ort_inputs.emplace_back(std::move(h_ort));
-        ort_inputs.emplace_back(std::move(c_ort));
 
         // Infer
         ort_outputs = session->Run(
-            Ort::RunOptions{ nullptr },
+            Ort::RunOptions{nullptr},
             input_node_names.data(), ort_inputs.data(), ort_inputs.size(),
             output_node_names.data(), output_node_names.size());
 
         // Output probability & update h,c recursively
         float speech_prob = ort_outputs[0].GetTensorMutableData<float>()[0];
-        float* hn = ort_outputs[1].GetTensorMutableData<float>();
-        std::memcpy(_h.data(), hn, size_hc * sizeof(float));
-        float* cn = ort_outputs[2].GetTensorMutableData<float>();
-        std::memcpy(_c.data(), cn, size_hc * sizeof(float));
+        float *stateN = ort_outputs[1].GetTensorMutableData<float>();
+        std::memcpy(_state.data(), stateN, size_state * sizeof(float));
 
         // Push forward sample index
         current_sample += window_size_samples;
@@ -419,7 +401,7 @@ private:
                 current_speech.start = current_sample - window_size_samples;
             }
             return;
-    }
+        }
 
         if (
             (triggered == true)
@@ -429,11 +411,11 @@ private:
                 current_speech.end = prev_end;
                 speeches.push_back(current_speech);
                 current_speech = timestamp_t();
-
+                
                 // previously reached silence(< neg_thres) and is still not speech(< thres)
                 if (next_start < prev_end)
                     triggered = false;
-                else {
+                else{
                     current_speech.start = next_start;
                 }
                 prev_end = 0;
@@ -441,7 +423,7 @@ private:
                 temp_end = 0;
 
             }
-            else {
+            else{ 
                 current_speech.end = current_sample;
                 speeches.push_back(current_speech);
                 current_speech = timestamp_t();
@@ -466,7 +448,7 @@ private:
                 float speech = current_sample - window_size_samples; // minus window_size_samples to get precise start time point.
                 printf("{  silence: %.3f s (%.3f) %08d}\n", 1.0 * speech / sample_rate, speech_prob, current_sample - window_size_samples);
 #endif //__DEBUG_SPEECH_PROB___
-}
+            }
             return;
         }
 
@@ -552,7 +534,7 @@ public:
             std::cout << speeches[i].c_str() << std::endl;
 #endif //#ifdef __DEBUG_SPEECH_PROB___
             std::vector<float> slice(&input_wav[speeches[i].start], &input_wav[speeches[i].end]);
-            output_wav.insert(output_wav.end(), slice.begin(), slice.end());
+            output_wav.insert(output_wav.end(),slice.begin(),slice.end());
         }
     };
 
@@ -606,27 +588,26 @@ private:
     // Inputs
     std::vector<Ort::Value> ort_inputs;
 
-    std::vector<const char*> input_node_names = { "input", "sr", "h", "c" };
+    std::vector<const char *> input_node_names = {"input", "state", "sr"};
     std::vector<float> input;
+    unsigned int size_state = 2 * 1 * 128; // It's FIXED.
+    std::vector<float> _state;
     std::vector<int64_t> sr;
-    unsigned int size_hc = 2 * 1 * 64; // It's FIXED.
-    std::vector<float> _h;
-    std::vector<float> _c;
 
     int64_t input_node_dims[2] = {};
-    const int64_t sr_node_dims[1] = { 1 };
-    const int64_t hc_node_dims[3] = { 2, 1, 64 };
+    const int64_t state_node_dims[3] = {2, 1, 128}; 
+    const int64_t sr_node_dims[1] = {1};
 
     // Outputs
     std::vector<Ort::Value> ort_outputs;
-    std::vector<const char*> output_node_names = { "output", "hn", "cn" };
+    std::vector<const char *> output_node_names = {"output", "stateN"};
 
 public:
     // Construction
     VadIterator(const std::wstring ModelPath,
-        int Sample_rate = 16000, int windows_frame_size = 64,
+        int Sample_rate = 16000, int windows_frame_size = 32,
         float Threshold = 0.5, int min_silence_duration_ms = 0,
-        int speech_pad_ms = 64, int min_speech_duration_ms = 64,
+        int speech_pad_ms = 32, int min_speech_duration_ms = 32,
         float max_speech_duration_s = std::numeric_limits<float>::infinity())
     {
         init_onnx_model(ModelPath);
@@ -652,8 +633,7 @@ public:
         input_node_dims[0] = 1;
         input_node_dims[1] = window_size_samples;
 
-        _h.resize(size_hc);
-        _c.resize(size_hc);
+        _state.resize(size_state);
         sr.resize(1);
         sr[0] = sample_rate;
     };
@@ -712,7 +692,7 @@ template<typename T>
 class AudioBuffer : public CircularQueue<T>
 {
 	public:
-    	AudioBuffer(size_t capacity) : CircularQueue<T>(capacity), 
+    	AudioBuffer(size_t capacity, bool enable_rnnoise = true) : CircularQueue<T>(capacity), 
                                         srcState(NULL), 
                                         resample_outputBuffer(NULL), 
                                         m_un8SaveAudioFlag(0)
@@ -723,7 +703,7 @@ class AudioBuffer : public CircularQueue<T>
 				cout << "AudioBuffer::srcState was NULL!" << endl;
 			}
 
-			resample_outputBuffer = (float *)std::malloc(INPUT_SAMPLE_RATE*2*sizeof(float));
+			resample_outputBuffer = (float *)std::malloc((size_t)INPUT_SAMPLE_RATE*2*sizeof(float));
 			if( resample_outputBuffer == NULL )
 			{
 				cout << "AudioBuffer::resample_outputBuffer was NULL!" << endl;
@@ -736,10 +716,14 @@ class AudioBuffer : public CircularQueue<T>
 			src_data.end_of_input = 0;
 			src_data.src_ratio = (double)OUTPOUT_SAMPLE_RATE / INPUT_SAMPLE_RATE;
 
-           
-            if (!rnnoise.available())
-            {
-                cout << "AudioBuffer::RNNoise was NULL!" << endl;
+
+            m_bEnableRnnoise = enable_rnnoise;
+            if (m_bEnableRnnoise)
+            { 
+                if (!rnnoise.available())
+                {
+                    cout << "AudioBuffer::RNNoise was NULL!" << endl;
+                }
             }
 		};
 		~AudioBuffer() {
@@ -755,7 +739,7 @@ class AudioBuffer : public CircularQueue<T>
             {
                 wavWriterRaw.close();
             }
-            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
+            if (this->m_bEnableRnnoise && m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
             {
                 wavWriterRnnoised.close();
             }
@@ -790,13 +774,13 @@ class AudioBuffer : public CircularQueue<T>
                 wavWriterRaw.write(pData[0], iFramesPerBuffer);
             }
 
-            if (rnnoise.available())
+            if (m_bEnableRnnoise && rnnoise.available())
             {
                 rnnoise.process(pData[0], iFramesPerBuffer);
             }
 
 
-            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
+            if (m_bEnableRnnoise && m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
             {
                 this->wavWriterRnnoised.write(pData[0], iFramesPerBuffer);// Copy all the frames over to our internal vector of samples
             }
@@ -848,11 +832,27 @@ class AudioBuffer : public CircularQueue<T>
 			return paContinue;
 		};
 
+        inline std::tm localtime_xp(std::time_t timer)
+        {
+            std::tm bt{};
+#if defined(__unix__)
+            localtime_r(&timer, &bt);
+#elif defined(_MSC_VER)
+            localtime_s(&bt, &timer);
+#else
+            static std::mutex mtx;
+            std::lock_guard<std::mutex> lock(mtx);
+            bt = *std::localtime(&timer);
+#endif
+            return bt;
+        }
+
         void setSaveAudioFlag(uint8_t save_audio)
         {
-            time_t now = time(0);
+            auto now = localtime_xp(std::time(0));
             char buffer[80];
-            strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", localtime(&now));
+  
+            strftime(buffer, sizeof(buffer), "%Y%m%d%H%M%S", &now);
 
             m_un8SaveAudioFlag = save_audio;
             if(m_un8SaveAudioFlag & SAVE_AUDIO_RAW)
@@ -860,7 +860,7 @@ class AudioBuffer : public CircularQueue<T>
                 std::string filename = std::string(buffer) + "_raw.wav";
                 wavWriterRaw.open(filename, (uint32_t)INPUT_SAMPLE_RATE, 32, 1);
             }
-            if (m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
+            if (this->m_bEnableRnnoise && m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
             {
                 std::string filename = std::string(buffer) + "_rnnoise.wav";
                 wavWriterRnnoised.open(filename, (uint32_t)INPUT_SAMPLE_RATE, 32, 1);
@@ -883,6 +883,7 @@ class AudioBuffer : public CircularQueue<T>
     	float              *resample_outputBuffer;
     	SRC_DATA            src_data;
         // RNN-based noise suppression
+        bool m_bEnableRnnoise;
         RNNoiseIterator rnnoise;
 
 public:
@@ -904,7 +905,7 @@ public:
     audio_async(); 
     ~audio_async();
 
-    bool init(int iInputDevice, uint8_t save_audio = 0);
+    bool init(int iInputDevice, uint8_t save_audio = 0, bool enable_rnnoise = true);
 
     // start capturing audio via the provided SDL callback
     // keep last len_ms seconds of audio in a circular buffer
