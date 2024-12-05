@@ -571,6 +571,7 @@ extern "C" {
         size_t                           i_start_rule;
         float                            grammar_penalty;
         bool split_on_word;
+        bool speed_up;
     };
 
     // NOTE: this function allocates memory, and it is the responsibility of the caller to free the pointer - see whisper_free_context_params & whisper_free_params()
