@@ -1,6 +1,7 @@
 require "whisper.so"
 require "uri"
 require "net/http"
+require "time"
 require "pathname"
 require "io/console/size"
 
@@ -56,9 +57,11 @@ class Whisper::Model
           when Net::HTTPOK
             download response
           when Net::HTTPRedirection
-            request URI(response["location"])
+            request URI(response["location"]), headers
           else
-            raise response
+            return if headers.key?("if-modified-since") # Use cache file
+
+            raise "#{response.code} #{response.message}\n#{response.body}"
           end
         end
       end
@@ -76,29 +79,36 @@ class Whisper::Model
           downloaded += chunk.bytesize
           show_progress downloaded, size
         end
+        $stderr.puts
       end
       downloading_path.rename path
     end
 
     def show_progress(current, size)
-      return unless size
+      progress_rate_available = size && $stderr.tty?
 
       unless @prev
         @prev = Time.now
-        $stderr.puts "Downloading #{@uri}"
+        $stderr.puts "Downloading #{@uri} to #{cache_path}"
       end
 
       now = Time.now
-      return if now - @prev < 1 && current < size
 
-      progress_width = 20
-      progress = current.to_f / size
-      arrow_length = progress * progress_width
-      arrow = "=" * (arrow_length - 1) + ">" + " " * (progress_width - arrow_length)
-      line = "[#{arrow}] (#{format_bytesize(current)} / #{format_bytesize(size)})"
-      padding = ' ' * ($stderr.winsize[1] - line.size)
-      $stderr.print "\r#{line}#{padding}"
-      $stderr.puts if current >= size
+      if progress_rate_available
+        return if now - @prev < 1 && current < size
+
+        progress_width = 20
+        progress = current.to_f / size
+        arrow_length = progress * progress_width
+        arrow = "=" * (arrow_length - 1) + ">" + " " * (progress_width - arrow_length)
+        line = "[#{arrow}] (#{format_bytesize(current)} / #{format_bytesize(size)})"
+        padding = ' ' * ($stderr.winsize[1] - line.size)
+        $stderr.print "\r#{line}#{padding}"
+      else
+        return if now - @prev < 1
+
+        $stderr.print "."
+      end
       @prev = now
     end
 
@@ -111,7 +121,7 @@ class Whisper::Model
     end
   end
 
-  @names = {}
+  @pre_converted_models = {}
   %w[
     tiny
     tiny.en
@@ -137,23 +147,17 @@ class Whisper::Model
     large-v1
     large-v2
     large-v2-q5_0
-    large-v2-8_0
+    large-v2-q8_0
     large-v3
     large-v3-q5_0
     large-v3-turbo
     large-v3-turbo-q5_0
     large-v3-turbo-q8_0
   ].each do |name|
-    @names[name] = URI.new("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-#{name}.bin")
+    @pre_converted_models[name] = URI.new("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-#{name}.bin")
   end
 
   class << self
-    def [](name)
-      @names[name]
-    end
-
-    def preconverted_model_names
-      @names.keys
-    end
+    attr_reader :pre_converted_models
   end
 end
