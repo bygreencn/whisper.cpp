@@ -14,10 +14,6 @@ if (WHISPER_SDL2)
     message(STATUS "SDL2_LIBRARIES    = ${SDL2_LIBRARIES}")
 endif()
 
-if (WHISPER_CLBLAST)
-    find_package(CLBlast REQUIRED)
-endif()
-
 # common
 
 set(TARGET common)
@@ -56,6 +52,8 @@ add_library(${TARGET} STATIC
     common.cpp
     common-ggml.h
     common-ggml.cpp
+    common-whisper.h
+    common-whisper.cpp
     grammar-parser.h
     grammar-parser.cpp
     ${COMMON_SOURCES_FFMPEG}
@@ -63,7 +61,7 @@ add_library(${TARGET} STATIC
 
 include(DefaultTargetOptions)
 
-target_link_libraries(${TARGET} PRIVATE whisper ${COMMON_EXTRA_LIBS})
+target_link_libraries(${TARGET} PRIVATE whisper ${COMMON_EXTRA_LIBS} ${CMAKE_DL_LIBS})
 
 set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(${TARGET} PROPERTIES FOLDER "libs")

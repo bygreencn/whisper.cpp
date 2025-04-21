@@ -35,7 +35,7 @@ if $GGML_METAL
   $GGML_METAL_EMBED_LIBRARY = true
 end
 
-$MK_CPPFLAGS = '-Iggml/include -Iggml/src -Iggml/src/ggml-cpu -Iinclude -Isrc -Iexamples'
+$MK_CPPFLAGS = '-Iggml/include -Iggml/src -Iggml/src/ggml-cpu -Iinclude -Isrc -Iexamples -DGGML_USE_CPU'
 $MK_CFLAGS   = '-std=c11   -fPIC'
 $MK_CXXFLAGS = '-std=c++17 -fPIC'
 $MK_NVCCFLAGS = '-std=c++17'
@@ -168,10 +168,14 @@ $OBJ_GGML <<
   'ggml/src/ggml-cpu/ggml-cpu-aarch64.o' <<
   'ggml/src/ggml-cpu/ggml-cpu-hbm.o' <<
   'ggml/src/ggml-cpu/ggml-cpu-quants.o' <<
-  'ggml/src/ggml-cpu/ggml-cpu-traits.o'
+  'ggml/src/ggml-cpu/ggml-cpu-traits.o' <<
+  'ggml/src/ggml-cpu/unary-ops.o' <<
+  'ggml/src/ggml-cpu/binary-ops.o'
 
 $OBJ_WHISPER <<
-  'src/whisper.o'
+  'src/whisper.o' <<
+  'examples/common.o' <<
+  'examples/common-whisper.o'
 
 $objs = $OBJ_GGML + $OBJ_WHISPER + $OBJ_COMMON + $OBJ_SDL
 $objs <<

@@ -10,14 +10,14 @@
 > [!NOTE]
 > New maintenance roadmap: https://github.com/ggerganov/whisper.cpp/discussions/2788
 
-Stable: [v1.7.4](https://github.com/ggerganov/whisper.cpp/releases/tag/v1.7.4) / [Roadmap | F.A.Q.](https://github.com/ggerganov/whisper.cpp/discussions/126)
+Stable: [v1.7.5](https://github.com/ggerganov/whisper.cpp/releases/tag/v1.7.5) / [Roadmap | F.A.Q.](https://github.com/ggerganov/whisper.cpp/discussions/126)
 
 High-performance inference of [OpenAI's Whisper](https://github.com/openai/whisper) automatic speech recognition (ASR) model:
 
 - Plain C/C++ implementation without dependencies
 - Apple Silicon first-class citizen - optimized via ARM NEON, Accelerate framework, Metal and [Core ML](#core-ml-support)
 - AVX intrinsics support for x86 architectures
-- VSX intrinsics support for POWER architectures
+- [VSX intrinsics support for POWER architectures](#power-vsx-intrinsics)
 - Mixed F16 / F32 precision
 - [Integer quantization support](#quantization)
 - Zero memory allocations at runtime
@@ -139,6 +139,20 @@ make -j large-v3-turbo
 | medium | 1.5 GiB | ~2.1 GB |
 | large  | 2.9 GiB | ~3.9 GB |
 
+## POWER VSX Intrinsics
+
+`whisper.cpp` supports POWER architectures and includes code which
+significantly speeds operation on Linux running on POWER9/10, making it
+capable of faster-than-realtime transcription on underclocked Raptor
+Talos II. Ensure you have a BLAS package installed, and replace the
+standard cmake setup with:
+
+```bash
+# build with GGML_BLAS defined
+cmake -B build -DGGML_BLAS=1
+cmake --build build --config Release
+./build/bin/whisper-cli [ .. etc .. ]
+
 ## Quantization
 
 `whisper.cpp` supports integer quantization of the Whisper `ggml` models.
@@ -170,11 +184,11 @@ speed-up - more than x3 faster compared with CPU-only execution. Here are the in
   ```
 
   - To ensure `coremltools` operates correctly, please confirm that [Xcode](https://developer.apple.com/xcode/) is installed and execute `xcode-select --install` to install the command-line tools.
-  - Python 3.10 is recommended.
+  - Python 3.11 is recommended.
   - MacOS Sonoma (version 14) or newer is recommended, as older versions of MacOS might experience issues with transcription hallucination.
   - [OPTIONAL] It is recommended to utilize a Python version management system, such as [Miniconda](https://docs.conda.io/en/latest/miniconda.html) for this step:
-    - To create an environment, use: `conda create -n py310-whisper python=3.10 -y`
-    - To activate the environment, use: `conda activate py310-whisper`
+    - To create an environment, use: `conda create -n py311-whisper python=3.11 -y`
+    - To activate the environment, use: `conda activate py311-whisper`
 
 - Generate a Core ML model. For example, to generate a `base.en` model, use:
 
@@ -413,7 +427,8 @@ For detailed instructions on how to use Conan, please refer to the [Conan docume
 
 This is a naive example of performing real-time inference on audio from your microphone.
 The [stream](examples/stream) tool samples the audio every half a second and runs the transcription continuously.
-More info is available in [issue #10](https://github.com/ggerganov/whisper.cpp/issues/10).
+More info is available in [issue #10](https://github.com/ggerganov/whisper.cpp/issues/10). 
+You will need to have [sdl2](https://wiki.libsdl.org/SDL2/Installation) installed for it to work properly. 
 
 ```bash
 cmake -B build -DWHISPER_SDL2=ON
