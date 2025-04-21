@@ -4,6 +4,7 @@
 //
 #include "common-portaudio.h"
 #include "common.h"
+#include "common-whisper.h"
 #include "whisper.h"
 
 #include <cassert>
