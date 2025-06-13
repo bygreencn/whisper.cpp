@@ -4,7 +4,7 @@
 
 .PHONY: build
 build:
-	cmake -B build
+	cmake -B build $(CMAKE_ARGS)
 	cmake --build build --config Release
 
 # download a few audio samples into folder "./samples":
@@ -41,17 +41,17 @@ samples:
 
 tiny.en tiny base.en base small.en small medium.en medium large-v1 large-v2 large-v3 large-v3-turbo:
 	bash ./models/download-ggml-model.sh $@
-	cmake -B build
+	cmake -B build $(CMAKE_ARGS)
 	cmake --build build --config Release
 	@echo ""
 	@echo "==============================================="
 	@echo "Running $@ on all samples in ./samples ..."
 	@echo "==============================================="
 	@echo ""
-	@for f in samples/*$(.flac .mp3 .ogg .wav); do \
+	@for f in samples/*.{flac,mp3,ogg,wav}; do \
 		echo "----------------------------------------------" ; \
 		echo "[+] Running $@ on $$f ... (run 'ffplay $$f' to listen)" ; \
-	    echo "----------------------------------------------" ; \
+		echo "----------------------------------------------" ; \
 		echo "" ; \
 		./build/bin/whisper-cli -m models/ggml-$@.bin -f $$f ; \
 		echo "" ; \

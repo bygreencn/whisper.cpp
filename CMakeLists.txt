@@ -59,9 +59,6 @@ option(BUILD_SHARED_LIBS "build shared libraries" ${BUILD_SHARED_LIBS_DEFAULT})
 # option list
 #
 
-# general
-option(WHISPER_CCACHE "whisper: use ccache if available" ON)
-
 # debug
 option(WHISPER_ALL_WARNINGS           "whisper: enable all compiler warnings"                   ON)
 option(WHISPER_ALL_WARNINGS_3RD_PARTY "whisper: enable all compiler warnings in 3rd party libs" OFF)
@@ -100,7 +97,6 @@ option(WHISPER_OPENVINO              "whisper: support for OpenVINO"      OFF)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/build-info.cmake)
 
 # override ggml options
-set(GGML_CCACHE             ${WHISPER_CCACHE})
 set(GGML_SANITIZE_THREAD    ${WHISPER_SANITIZE_THREAD})
 set(GGML_SANITIZE_ADDRESS   ${WHISPER_SANITIZE_ADDRESS})
 set(GGML_SANITIZE_UNDEFINED ${WHISPER_SANITIZE_UNDEFINED})
@@ -125,6 +121,12 @@ whisper_option_depr(WARNING     WHISPER_OPENMP              GGML_OPENMP)
 whisper_option_depr(WARNING     WHISPER_RPC                 GGML_RPC)
 whisper_option_depr(WARNING     WHISPER_SYCL                GGML_SYCL)
 whisper_option_depr(WARNING     WHISPER_SYCL_F16            GGML_SYCL_F16)
+whisper_option_depr(WARNING     WHISPER_CCACHE              GGML_CCACHE)
+
+if (GGML_CUDA AND NOT MSVC)
+    #GGML_CUDA enabled, add the necessary compile options -Wno-deprecated-gpu-targets
+    add_compile_options(-Wno-deprecated-gpu-targets)
+endif()
 
 #
 # build the library
@@ -139,6 +141,22 @@ if (NOT TARGET ggml)
         add_library(ggml ALIAS ggml::ggml)
     else()
         add_subdirectory(ggml)
+        if(WIN32)
+            # The following adds a _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR macro and is a workaround for
+            # the Windows C++ standard library which does not support constexpr mutexes.
+            # From the release notes://github.com/microsoft/STL/wiki/Changelog
+            #  Disable constexpr mutex constructor on Windows
+            #  Fixed mutex's constructor to be constexpr. #3824 #4000 #4339
+            #  Note: Programs that aren't following the documented restrictions on binary compatibility may encounter
+            #  null dereferences in mutex machinery. You must follow this rule:
+            #  When you mix binaries built by different supported versions of the toolset, the Redistributable version
+            #  must be at least as new as the latest toolset used by any app component.
+            #  You can define _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR as an escape hatch.
+            #
+            # Specifically to whisper.cpp this would cause a crash when using the Java bindings.
+            # resulting in a Invalid memory access error.
+            target_compile_definitions(ggml-base PRIVATE _DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
+        endif()
     endif()
     # ... otherwise assume ggml is added by a parent CMakeLists.txt
 endif()
@@ -200,4 +218,38 @@ endif ()
 
 if (WHISPER_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if (MSVC)
+    set(MSVC_WARNING_FLAGS
+        /wd4101  # Unreferenced local variable
+        /wd4005  # Macro redefinition
+        /wd4065  # switch statement contains 'default' but no 'case' labels
+        /wd4267  # Conversion from 'size_t' to a smaller type, possible loss of data
+        /wd4244  # Conversion from one type to another type, possible loss of ata
+        /wd4805  # Unsafe mix of type
+        /wd4305  # Truncation from 'type1' to 'type2' (often double to float)
+        /wd4996  # Function or variable may be unsafe/deprecated
+    )
+    function(disable_msvc_warnings target_name)
+        if(TARGET ${target_name})
+            target_compile_options(${target_name} PRIVATE ${MSVC_WARNING_FLAGS})
+        endif()
+    endfunction()
+
+    if (WHISPER_BUILD_EXAMPLES)
+        disable_msvc_warnings(whisper)
+        disable_msvc_warnings(common)
+        disable_msvc_warnings(common-sdl)
+        disable_msvc_warnings(lsp)
+        disable_msvc_warnings(wchess-core)
+        disable_msvc_warnings(whisper-command)
+        disable_msvc_warnings(whisper-cli)
+        disable_msvc_warnings(whisper-server)
+        disable_msvc_warnings(whisper-stream)
+        disable_msvc_warnings(whisper-talk-llama)
+        disable_msvc_warnings(whisper-bench)
+        disable_msvc_warnings(quantize)
+        disable_msvc_warnings(vad-speech-segments)
+    endif()
 endif()

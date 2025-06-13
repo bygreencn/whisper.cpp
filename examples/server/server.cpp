@@ -5,6 +5,7 @@
 #include "httplib.h"
 #include "json.hpp"
 
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -13,10 +14,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-#if defined(_MSC_VER)
-#pragma warning(disable: 4244 4267) // possible loss of data
-#endif
 
 using namespace httplib;
 using json = nlohmann::ordered_json;
@@ -94,6 +91,16 @@ struct whisper_params {
     std::string openvino_encode_device = "CPU";
 
     std::string dtw = "";
+
+    // Voice Activity Detection (VAD) parameters
+    bool        vad           = false;
+    std::string vad_model     = "";
+    float       vad_threshold = 0.5f;
+    int         vad_min_speech_duration_ms = 250;
+    int         vad_min_silence_duration_ms = 100;
+    float       vad_max_speech_duration_s = FLT_MAX;
+    int         vad_speech_pad_ms = 30;
+    float       vad_samples_overlap = 0.1f;
 };
 
 void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params, const server_params& sparams) {
@@ -142,6 +149,20 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -sns,      --suppress-nst      [%-7s] suppress non-speech tokens\n", params.suppress_nst ? "true" : "false");
     fprintf(stderr, "  -nth N,    --no-speech-thold N [%-7.2f] no speech threshold\n",   params.no_speech_thold);
     fprintf(stderr, "  -nc,       --no-context        [%-7s] do not use previous audio context\n", params.no_context ? "true" : "false");
+    fprintf(stderr, "  -ng,       --no-gpu            [%-7s] do not use gpu\n", params.use_gpu ? "false" : "true");
+    fprintf(stderr, "  -fa,       --flash-attn        [%-7s] flash attention\n", params.flash_attn ? "true" : "false");
+    // Voice Activity Detection (VAD) parameters
+    fprintf(stderr, "\nVoice Activity Detection (VAD) options:\n");
+    fprintf(stderr, "             --vad                           [%-7s] enable Voice Activity Detection (VAD)\n",            params.vad ? "true" : "false");
+    fprintf(stderr, "  -vm FNAME, --vad-model FNAME               [%-7s] VAD model path\n",                                   params.vad_model.c_str());
+    fprintf(stderr, "  -vt N,     --vad-threshold N               [%-7.2f] VAD threshold for speech recognition\n",           params.vad_threshold);
+    fprintf(stderr, "  -vspd N,   --vad-min-speech-duration-ms  N [%-7d] VAD min speech duration (0.0-1.0)\n",                params.vad_min_speech_duration_ms);
+    fprintf(stderr, "  -vsd N,    --vad-min-silence-duration-ms N [%-7d] VAD min silence duration (to split segments)\n",      params.vad_min_silence_duration_ms);
+    fprintf(stderr, "  -vmsd N,   --vad-max-speech-duration-s   N [%-7s] VAD max speech duration (auto-split longer)\n",      params.vad_max_speech_duration_s == FLT_MAX ?
+                                                                                                                                  std::string("FLT_MAX").c_str() :
+                                                                                                                                  std::to_string(params.vad_max_speech_duration_s).c_str());
+    fprintf(stderr, "  -vp N,     --vad-speech-pad-ms           N [%-7d] VAD speech padding (extend segments)\n",             params.vad_speech_pad_ms);
+    fprintf(stderr, "  -vo N,     --vad-samples-overlap         N [%-7.2f] VAD samples overlap (seconds between segments)\n", params.vad_samples_overlap);
     fprintf(stderr, "\n");
 }
 
@@ -197,6 +218,16 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
         else if (                  arg == "--request-path")    { sparams.request_path = argv[++i]; }
         else if (                  arg == "--inference-path")  { sparams.inference_path = argv[++i]; }
         else if (                  arg == "--convert")         { sparams.ffmpeg_converter     = true; }
+
+        // Voice Activity Detection (VAD)
+        else if (                  arg == "--vad")                         { params.vad                         = true; }
+        else if (arg == "-vm"   || arg == "--vad-model")                   { params.vad_model                   = argv[++i]; }
+        else if (arg == "-vt"   || arg == "--vad-threshold")               { params.vad_threshold               = std::stof(argv[++i]); }
+        else if (arg == "-vspd" || arg == "--vad-min-speech-duration-ms")  { params.vad_min_speech_duration_ms  = std::stoi(argv[++i]); }
+        else if (arg == "-vsd"  || arg == "--vad-min-silence-duration-ms") { params.vad_min_speech_duration_ms  = std::stoi(argv[++i]); }
+        else if (arg == "-vmsd" || arg == "--vad-max-speech-duration-s")   { params.vad_max_speech_duration_s   = std::stof(argv[++i]); }
+        else if (arg == "-vp"   || arg == "--vad-speech-pad-ms")           { params.vad_speech_pad_ms           = std::stoi(argv[++i]); }
+        else if (arg == "-vo"   || arg == "--vad-samples-overlap")         { params.vad_samples_overlap         = std::stof(argv[++i]); }
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             whisper_print_usage(argc, argv, params, sparams);
@@ -513,11 +544,41 @@ void get_req_parameters(const Request & req, whisper_params & params)
     {
         params.no_context = parse_str_to_bool(req.get_file_value("no_context").content);
     }
+    if (req.has_file("vad"))
+    {
+        params.vad = parse_str_to_bool(req.get_file_value("vad").content);
+    }
+    if (req.has_file("vad_threshold"))
+    {
+        params.vad_threshold = std::stof(req.get_file_value("vad_threshold").content);
+    }
+    if (req.has_file("vad_min_speech_duration_ms"))
+    {
+        params.vad_min_speech_duration_ms = std::stof(req.get_file_value("vad_min_speech_duration_ms").content);
+    }
+    if (req.has_file("vad_min_silence_duration_ms"))
+    {
+        params.vad_min_silence_duration_ms = std::stof(req.get_file_value("vad_min_silence_duration_ms").content);
+    }
+    if (req.has_file("vad_max_speech_duration_s"))
+    {
+        params.vad_max_speech_duration_s = std::stof(req.get_file_value("vad_max_speech_duration_s").content);
+    }
+    if (req.has_file("vad_speech_pad_ms"))
+    {
+        params.vad_speech_pad_ms = std::stoi(req.get_file_value("vad_speech_pad_ms").content);
+    }
+    if (req.has_file("vad_samples_overlap"))
+    {
+        params.vad_samples_overlap = std::stof(req.get_file_value("vad_samples_overlap").content);
+    }
 }
 
 }  // namespace
 
 int main(int argc, char ** argv) {
+    ggml_backend_load_all();
+
     whisper_params params;
     server_params sparams;
 
@@ -829,6 +890,16 @@ int main(int argc, char ** argv) {
 
             wparams.suppress_nst     = params.suppress_nst;
 
+            wparams.vad              = params.vad;
+            wparams.vad_model_path   = params.vad_model.c_str();
+
+            wparams.vad_params.threshold               = params.vad_threshold;
+            wparams.vad_params.min_speech_duration_ms  = params.vad_min_speech_duration_ms;
+            wparams.vad_params.min_silence_duration_ms = params.vad_min_silence_duration_ms;
+            wparams.vad_params.max_speech_duration_s   = params.vad_max_speech_duration_s;
+            wparams.vad_params.speech_pad_ms           = params.vad_speech_pad_ms;
+            wparams.vad_params.samples_overlap         = params.vad_samples_overlap;
+
             whisper_print_user_data user_data = { &params, &pcmf32s, 0 };
 
             // this callback is called on each new segment
@@ -842,33 +913,25 @@ int main(int argc, char ** argv) {
                 wparams.progress_callback_user_data = &user_data;
             }
 
-            // examples for abort mechanism
-            // in examples below, we do not abort the processing, but we could if the flag is set to true
-
-            // the callback is called before every encoder run - if it returns false, the processing is aborted
-            {
-                static bool is_aborted = false; // NOTE: this should be atomic to avoid data race
-
-                wparams.encoder_begin_callback = [](struct whisper_context * /*ctx*/, struct whisper_state * /*state*/, void * user_data) {
-                    bool is_aborted = *(bool*)user_data;
-                    return !is_aborted;
-                };
-                wparams.encoder_begin_callback_user_data = &is_aborted;
-            }
-
-            // the callback is called before every computation - if it returns true, the computation is aborted
-            {
-                static bool is_aborted = false; // NOTE: this should be atomic to avoid data race
-
-                wparams.abort_callback = [](void * user_data) {
-                    bool is_aborted = *(bool*)user_data;
-                    return is_aborted;
-                };
-                wparams.abort_callback_user_data = &is_aborted;
-            }
+            // tell whisper to abort if the HTTP connection closed
+            wparams.abort_callback = [](void *user_data) {
+                // user_data is a pointer to our Request
+                auto req_ptr = static_cast<const httplib::Request*>(user_data);
+                return req_ptr->is_connection_closed();
+            };
+            wparams.abort_callback_user_data = (void*)&req;
 
             if (whisper_full_parallel(ctx, wparams, pcmf32.data(), pcmf32.size(), params.n_processors) != 0) {
+                // handle failure or early abort
+                if (req.is_connection_closed()) {
+                    // log client disconnect
+                    fprintf(stderr, "client disconnected, aborted processing\n");
+                    res.status = 499; // Client Closed Request (nginx convention)
+                    res.set_content("{\"error\":\"client disconnected\"}", "application/json");
+                    return;
+                }
                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
+                res.status = 500; // Internal Server Error
                 const std::string error_resp = "{\"error\":\"failed to process audio\"}";
                 res.set_content(error_resp, "application/json");
                 return;
@@ -926,14 +989,26 @@ int main(int argc, char ** argv) {
             res.set_content(ss.str(), "text/vtt");
         } else if (params.response_format == vjson_format) {
             /* try to match openai/whisper's Python format */
-            std::string results = output_str(ctx, params, pcmf32s);
+            std::string results = output_str(ctx, params, pcmf32s); 
+            // Get language probabilities
+            std::vector<float> lang_probs(whisper_lang_max_id() + 1, 0.0f);
+            const auto detected_lang_id = whisper_lang_auto_detect(ctx, 0, params.n_threads, lang_probs.data());
             json jres = json{
                 {"task", params.translate ? "translate" : "transcribe"},
                 {"language", whisper_lang_str_full(whisper_full_lang_id(ctx))},
                 {"duration", float(pcmf32.size())/WHISPER_SAMPLE_RATE},
                 {"text", results},
-                {"segments", json::array()}
+                {"segments", json::array()},
+                {"detected_language", whisper_lang_str_full(detected_lang_id)},
+                {"detected_language_probability", lang_probs[detected_lang_id]},
+                {"language_probabilities", json::object()}
             };
+            // Add all language probabilities
+            for (int i = 0; i <= whisper_lang_max_id(); ++i) {
+                if (lang_probs[i] > 0.001f) { // Only include non-negligible probabilities
+                    jres["language_probabilities"][whisper_lang_str(i)] = lang_probs[i];
+                }
+            }
             const int n_segments = whisper_full_n_segments(ctx);
             for (int i = 0; i < n_segments; ++i)
             {

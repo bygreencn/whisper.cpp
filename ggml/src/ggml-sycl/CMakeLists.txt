@@ -13,7 +13,7 @@ elseif(SUPPORTS_SYCL)
         If you expected the oneAPI Release compiler, please install oneAPI & source it, like:
         source /opt/intel/oneapi/setvars.sh")
 else()
-    message(FATAL_ERROR, "C++ compiler lacks SYCL support.")
+    message(FATAL_ERROR "C++ compiler lacks SYCL support.")
 endif()
 message(STATUS "SYCL found")
 #todo: AOT
@@ -26,6 +26,15 @@ ggml_add_backend_library(ggml-sycl
 file(GLOB   GGML_HEADERS_SYCL "*.hpp")
 file(GLOB   GGML_SOURCES_SYCL "*.cpp")
 target_sources(ggml-sycl PRIVATE ${GGML_HEADERS_SYCL} ${GGML_SOURCES_SYCL})
+
+if (WIN32)
+    # To generate a Visual Studio solution, using Intel C++ Compiler for ggml-sycl is mandatory
+    if( ${CMAKE_GENERATOR} MATCHES "Visual Studio" AND NOT (${CMAKE_GENERATOR_TOOLSET} MATCHES "Intel C"))
+        set_target_properties(ggml-sycl PROPERTIES VS_PLATFORM_TOOLSET "Intel C++ Compiler 2025")
+        set(CMAKE_CXX_COMPILER "icx")
+        set(CMAKE_CXX_COMPILER_ID "IntelLLVM")
+    endif()
+endif()
 
 find_package(IntelSYCL)
 if (IntelSYCL_FOUND)
@@ -40,35 +49,38 @@ endif()
 target_compile_options(ggml-sycl PRIVATE "-Wno-narrowing")
 
 # Link against oneDNN
-find_package(DNNL)
 set(GGML_SYCL_DNNL 0)
-if(DNNL_FOUND)
-    if (DEFINED ENV{ONEAPI_ROOT} AND NOT DEFINED DNNL_GPU_VENDOR)
-        # Assuming oneDNN packaged with oneapi release is used which
-        # supports only intel target
-        set(DNNL_GPU_VENDOR "INTEL")
-        if(NOT "${GGML_SYCL_TARGET}" STREQUAL "INTEL")
-            message(WARNING "oneDNN builds bundled with oneapi release only support INTEL target")
+if(GGML_SYCL_DNN)
+    find_package(DNNL)
+    if(DNNL_FOUND)
+        if (NOT DEFINED DNNL_GPU_VENDOR)
+            # default to intel target
+            set(DNNL_GPU_VENDOR "INTEL")
+            if(NOT "${GGML_SYCL_TARGET}" STREQUAL "INTEL")
+                message(WARNING "oneDNN builds bundled with oneapi release only support INTEL target")
+            endif()
         endif()
-    endif()
 
-    # Verify oneDNN was compiled for the same target as llama
-    if("${GGML_SYCL_TARGET}" STREQUAL "${DNNL_GPU_VENDOR}")
-        target_link_libraries(ggml-sycl PRIVATE DNNL::dnnl)
-        set(GGML_SYCL_DNNL 1)
-        get_target_property(CONFIGS DNNL::dnnl IMPORTED_CONFIGURATIONS)
-        foreach(CONFIG ${CONFIGS})
-            get_target_property(DNNL_LIB DNNL::dnnl IMPORTED_LOCATION_${CONFIG})
-            message(STATUS "Found oneDNN: ${DNNL_LIB}")
-        endforeach()
+        # Verify oneDNN was compiled for the same target as llama
+        if("${GGML_SYCL_TARGET}" STREQUAL "${DNNL_GPU_VENDOR}")
+            target_link_libraries(ggml-sycl PRIVATE DNNL::dnnl)
+            set(GGML_SYCL_DNNL 1)
+            get_target_property(CONFIGS DNNL::dnnl IMPORTED_CONFIGURATIONS)
+            foreach(CONFIG ${CONFIGS})
+                get_target_property(DNNL_LIB DNNL::dnnl IMPORTED_LOCATION_${CONFIG})
+                message(STATUS "Found oneDNN: ${DNNL_LIB}")
+            endforeach()
+        else()
+            message(WARNING
+                "oneDNN must be compiled for the same target as llama.cpp.
+                 llama.cpp: ${GGML_SYCL_TARGET}, oneDNN: ${DNNL_GPU_VENDOR}.
+                 Disabling oneDNN support.")
+        endif()
     else()
-        message(WARNING
-            "oneDNN must be compiled for the same target as llama.cpp.
-             llama.cpp: ${GGML_SYCL_TARGET}, oneDNN: ${DNNL_GPU_VENDOR}.
-             Disabling oneDNN support.")
+        message(STATUS "oneDNN not found, disabling oneDNN support")
     endif()
 else()
-    message(STATUS "oneDNN not found, disabling oneDNN support")
+    message(STATUS "oneDNN support disabled by the user")
 endif()
 target_compile_definitions(ggml-sycl PRIVATE GGML_SYCL_DNNL=${GGML_SYCL_DNNL})
 
@@ -99,6 +111,9 @@ endif()
 if (GGML_SYCL_TARGET STREQUAL "INTEL")
     # Intel devices use Intel oneMKL directly instead of oneMath to avoid the limitation of linking Intel oneMKL statically
     # See https://github.com/uxlfoundation/oneMath/issues/654
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        set(SYCL_COMPILER ON)
+    endif()
     find_package(MKL REQUIRED)
     target_link_libraries(ggml-sycl PRIVATE MKL::MKL_SYCL::BLAS)
     target_compile_definitions(ggml-sycl PRIVATE GGML_SYCL_USE_INTEL_ONEMKL)
@@ -155,7 +170,7 @@ else()
         target_compile_definitions(ggml-sycl PRIVATE GGML_SYCL_NVIDIA)
     elseif (GGML_SYCL_TARGET STREQUAL "AMD")
         if (NOT GGML_SYCL_DEVICE_ARCH)
-            message(ERROR "Can't enable SYCL hip backend, GGML_SYCL_DEVICE_ARCH has not been set.")
+            message(FATAL_ERROR "Can't enable SYCL hip backend, GGML_SYCL_DEVICE_ARCH has not been set.")
         endif()
         target_link_libraries(ggml-sycl PRIVATE ONEMATH::onemath_blas_rocblas)
         target_compile_options(ggml-sycl PRIVATE "-fsycl-targets=amdgcn-amd-amdhsa")

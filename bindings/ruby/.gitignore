@@ -1,6 +1,8 @@
 LICENSE
 pkg/
 lib/whisper.*
-ext/sources/*
-!ext/sources/CMakeGraphVizOptions.cmake
-ext/mkmf.log
+ext/examples/
+ext/ggml/
+ext/include/
+ext/scripts/
+ext/src/

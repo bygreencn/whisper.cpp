@@ -24,7 +24,21 @@ or,
 
     $ gem install whispercpp -- --enable-ggml-cuda
 
-See whisper.cpp's [README](https://github.com/ggml-org/whisper.cpp/blob/master/README.md) for available options. You need convert options present the README to Ruby-style options.  
+See whisper.cpp's [README](https://github.com/ggml-org/whisper.cpp/blob/master/README.md) for available options. You need convert options present the README to Ruby-style options, for example:
+
+Boolean options:
+
+* `-DGGML_BLAS=1` -> `--enable-ggml-blas`
+* `-DWHISER_COREML=OFF` -> `--disable-whisper-coreml`
+
+Argument options:
+
+* `-DGGML_CUDA_COMPRESSION_MODE=size` -> `--ggml-cuda-compression-mode=size`
+
+Combination:
+
+* `-DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES="86"` -> `--enable-ggml-cuda --cmake_cuda-architectures="86"`
+
 For boolean options like `GGML_CUDA`, the README says `-DGGML_CUDA=1`. You need strip `-D`, prepend `--enable-` for `1` or `ON` (`--disable-` for `0` or `OFF`) and make it kebab-case: `--enable-ggml-cuda`.  
 For options which require arguments like `CMAKE_CUDA_ARCHITECTURES`, the README says `-DCMAKE_CUDA_ARCHITECTURES="86"`. You need strip `-D`, prepend `--`, make it kebab-case, append `=` and append argument: `--cmake-cuda-architectures="86"`.
 
@@ -56,17 +70,6 @@ end
 
 Some models are prepared up-front:
 
-```ruby
-base_en = Whisper::Model.pre_converted_models["base.en"]
-whisper = Whisper::Context.new(base_en)
-```
-
-At first time you use a model, it is downloaded automatically. After that, downloaded cached file is used. To clear cache, call `#clear_cache`:
-
-```ruby
-Whisper::Model.pre_converted_models["base"].clear_cache
-```
-
 You also can use shorthand for pre-converted models:
 
 ```ruby
@@ -91,6 +94,19 @@ puts Whisper::Model.pre_converted_models.keys
 #   :
 ```
 
+You can also retrieve each model:
+
+```ruby
+base_en = Whisper::Model.pre_converted_models["base.en"]
+whisper = Whisper::Context.new(base_en)
+```
+
+At first time you use a model, it is downloaded automatically. After that, downloaded cached file is used. To clear cache, call `#clear_cache`:
+
+```ruby
+Whisper::Model.pre_converted_models["base"].clear_cache
+```
+
 You can also use local model files you prepared:
 
 ```ruby
@@ -111,8 +127,79 @@ See [models][] page for details.
 
 Currently, whisper.cpp accepts only 16-bit WAV files.
 
+### Voice Activity Detection (VAD) ###
+
+Support for Voice Activity Detection (VAD) can be enabled by setting `Whisper::Params`'s `vad` argument to `true` and specifying VAD model:
+
+```ruby
+Whisper::Params.new(
+  vad: true,
+  vad_model_path: "silero-v5.1.2",
+  # other arguments...
+)
+```
+
+When you pass the model name (`"silero-v5.1.2"`) or URI (`https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin`), it will be downloaded automatically.
+Currently, "silero-v5.1.2" is registered as pre-converted model like ASR models. You also specify file path or URI of model.
+
+If you need configure VAD behavior, pass params for that:
+
+```ruby
+Whisper::Params.new(
+  vad: true,
+  vad_model_path: "silero-v5.1.2",
+  vad_params: Whisper::VAD::Params.new(
+    threshold: 1.0, # defaults to 0.5
+    min_speech_duration_ms: 500, # defaults to 250
+    min_silence_duration_ms: 200, # defaults to 100
+    max_speech_duration_s: 30000, # default is FLT_MAX,
+    speech_pad_ms: 50, # defaults to 30
+    samples_overlap: 0.5 # defaults to 0.1
+  ),
+  # other arguments...
+)
+```
+
+For details on VAD, see [whisper.cpp's README](https://github.com/ggml-org/whisper.cpp?tab=readme-ov-file#voice-activity-detection-vad).
+
+### Output ###
+
+whispercpp supports SRT and WebVTT output:
+
+```ruby
+puts whisper.transcribe("path/to/audio.wav", Whisper::Params.new).to_webvtt
+# =>
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:03.860
+ My thought I have nobody by a beauty and will as you poured.
+
+2
+00:00:03.860 --> 00:00:09.840
+ Mr. Rochester is sub in that so-don't find simplest, and devoted about, to let might in
+
+3
+00:00:09.840 --> 00:00:09.940
+ a
+
+```
+
+You may call `#to_srt`, too
+
+
 API
 ---
+
+### Transcription ###
+
+By default, `Whisper::Context#transcribe` works in a single thread. You can make it work in parallel by passing `n_processors` option:
+
+```ruby
+whisper.transcribe("path/to/audio.wav", params, n_processors: Etc.nprocessors)
+```
+
+Note that transcription occasionally might be low accuracy when it works in parallel.
 
 ### Segments ###
 
@@ -135,7 +222,7 @@ whisper
       ed: format_time(segment.end_time),
       text: segment.text
     }
-    line << " (speaker turned)" if segment.speaker_next_turn?
+    line << " (speaker turned)" if segment.speaker_turn_next?
     puts line
   end
 
@@ -151,7 +238,7 @@ params.on_new_segment do |segment|
     ed: format_time(segment.end_time),
     text: segment.text
   }
-  line << " (speaker turned)" if segment.speaker_next_turn?
+  line << " (speaker turned)" if segment.speaker_turn_next?
   puts line
 end
 
@@ -247,6 +334,11 @@ Development
 First call of `rake test` builds an extension and downloads a model for testing. After that, you add tests in `tests` directory and modify `ext/ruby_whisper.cpp`.
 
 If something seems wrong on build, running `rake clean` solves some cases.
+
+### Need help ###
+
+* Windows support
+* Refinement of C/C++ code, especially memory management
 
 License
 -------

@@ -3,7 +3,7 @@
 
 #define BOOL_PARAMS_SETTER(self, prop, value) \
   ruby_whisper_params *rwp; \
-  Data_Get_Struct(self, ruby_whisper_params, rwp); \
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp); \
   if (value == Qfalse || value == Qnil) { \
     rwp->params.prop = false; \
   } else { \
@@ -13,7 +13,7 @@
 
 #define BOOL_PARAMS_GETTER(self,  prop) \
   ruby_whisper_params *rwp; \
-  Data_Get_Struct(self, ruby_whisper_params, rwp); \
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp); \
   if (rwp->params.prop) { \
     return Qtrue; \
   } else { \
@@ -26,13 +26,16 @@
   rb_define_method(cParams, #param_name, ruby_whisper_params_get_ ## param_name, 0); \
   rb_define_method(cParams, #param_name "=", ruby_whisper_params_set_ ## param_name, 1);
 
-#define RUBY_WHISPER_PARAMS_PARAM_NAMES_COUNT 30
+#define RUBY_WHISPER_PARAMS_PARAM_NAMES_COUNT 35
 
 extern VALUE cParams;
+extern VALUE cVADParams;
 
 extern ID id_call;
 
-extern VALUE rb_whisper_segment_initialize(VALUE context, int index);
+extern VALUE ruby_whisper_normalize_model_path(VALUE model_path);
+extern VALUE rb_whisper_segment_s_new(VALUE context, int index);
+extern const rb_data_type_t ruby_whisper_vad_params_type;
 
 static ID param_names[RUBY_WHISPER_PARAMS_PARAM_NAMES_COUNT];
 static ID id_language;
@@ -63,12 +66,19 @@ static ID id_new_segment_callback;
 static ID id_new_segment_callback_user_data;
 static ID id_progress_callback;
 static ID id_progress_callback_user_data;
+static ID id_encoder_begin_callback;
+static ID id_encoder_begin_callback_user_data;
 static ID id_abort_callback;
 static ID id_abort_callback_user_data;
+static ID id_vad;
+static ID id_vad_model_path;
+static ID id_vad_params;
 
 static void
 rb_whisper_callbcack_container_mark(ruby_whisper_callback_container *rwc)
 {
+  if (rwc == NULL) return;
+
   rb_gc_mark(rwc->user_data);
   rb_gc_mark(rwc->callback);
   rb_gc_mark(rwc->callbacks);
@@ -100,7 +110,7 @@ static void new_segment_callback(struct whisper_context *ctx, struct whisper_sta
   const int n_segments = whisper_full_n_segments_from_state(state);
   for (int i = n_new; i > 0; i--) {
     int i_segment = n_segments - i;
-    VALUE segment = rb_whisper_segment_initialize(*container->context, i_segment);
+    VALUE segment = rb_whisper_segment_s_new(*container->context, i_segment);
     for (int j = 0; j < callbacks_len; j++) {
       VALUE cb = rb_ary_entry(container->callbacks, j);
       rb_funcall(cb, id_call, 1, segment);
@@ -126,6 +136,33 @@ static void progress_callback(struct whisper_context *ctx, struct whisper_state 
   }
 }
 
+static bool encoder_begin_callback(struct whisper_context *ctx, struct whisper_state *state, void *user_data) {
+  const ruby_whisper_callback_container *container = (ruby_whisper_callback_container *)user_data;
+  bool is_aborted = false;
+  VALUE result;
+
+  // Currently, doesn't support state because
+  // those require to resolve GC-related problems.
+  if (!NIL_P(container->callback)) {
+    result = rb_funcall(container->callback, id_call, 3, *container->context, Qnil, container->user_data);
+    if (result == Qfalse) {
+      is_aborted = true;
+    }
+  }
+  const long callbacks_len = RARRAY_LEN(container->callbacks);
+  if (0 == callbacks_len) {
+    return !is_aborted;
+  }
+  for (int j = 0; j < callbacks_len; j++) {
+    VALUE cb = rb_ary_entry(container->callbacks, j);
+    result = rb_funcall(cb, id_call, 0);
+    if (result == Qfalse) {
+      is_aborted = true;
+    }
+  }
+  return !is_aborted;
+}
+
 static bool abort_callback(void * user_data) {
   const ruby_whisper_callback_container *container = (ruby_whisper_callback_container *)user_data;
   if (!NIL_P(container->callback)) {
@@ -148,7 +185,7 @@ static bool abort_callback(void * user_data) {
   return false;
 }
 
-void register_callbacks(ruby_whisper_params * rwp, VALUE * context) {
+static void register_callbacks(ruby_whisper_params * rwp, VALUE * context) {
   if (!NIL_P(rwp->new_segment_callback_container->callback) || 0 != RARRAY_LEN(rwp->new_segment_callback_container->callbacks)) {
     rwp->new_segment_callback_container->context = context;
     rwp->params.new_segment_callback = new_segment_callback;
@@ -161,6 +198,12 @@ void register_callbacks(ruby_whisper_params * rwp, VALUE * context) {
     rwp->params.progress_callback_user_data = rwp->progress_callback_container;
   }
 
+  if (!NIL_P(rwp->encoder_begin_callback_container->callback) || 0 != RARRAY_LEN(rwp->encoder_begin_callback_container->callbacks)) {
+    rwp->encoder_begin_callback_container->context = context;
+    rwp->params.encoder_begin_callback = encoder_begin_callback;
+    rwp->params.encoder_begin_callback_user_data = rwp->encoder_begin_callback_container;
+  }
+
   if (!NIL_P(rwp->abort_callback_container->callback) || 0 != RARRAY_LEN(rwp->abort_callback_container->callbacks)) {
     rwp->abort_callback_container->context = context;
     rwp->params.abort_callback = abort_callback;
@@ -168,12 +211,29 @@ void register_callbacks(ruby_whisper_params * rwp, VALUE * context) {
   }
 }
 
-void
-rb_whisper_params_mark(ruby_whisper_params *rwp)
+static void set_vad_params(ruby_whisper_params *rwp)
 {
+  ruby_whisper_vad_params * rwvp;
+  TypedData_Get_Struct(rwp->vad_params, ruby_whisper_vad_params, &ruby_whisper_vad_params_type, rwvp);
+  rwp->params.vad_params = rwvp->params;
+}
+
+void
+prepare_transcription(ruby_whisper_params *rwp, VALUE *context)
+{
+  register_callbacks(rwp, context);
+  set_vad_params(rwp);
+}
+
+void
+rb_whisper_params_mark(void *p)
+{
+  ruby_whisper_params *rwp = (ruby_whisper_params *)p;
   rb_whisper_callbcack_container_mark(rwp->new_segment_callback_container);
   rb_whisper_callbcack_container_mark(rwp->progress_callback_container);
+  rb_whisper_callbcack_container_mark(rwp->encoder_begin_callback_container);
   rb_whisper_callbcack_container_mark(rwp->abort_callback_container);
+  rb_gc_mark(rwp->vad_params);
 }
 
 void
@@ -182,24 +242,46 @@ ruby_whisper_params_free(ruby_whisper_params *rwp)
 }
 
 void
-rb_whisper_params_free(ruby_whisper_params *rwp)
+rb_whisper_params_free(void *p)
 {
+  ruby_whisper_params *rwp = (ruby_whisper_params *)p;
   // How to free user_data and callback only when not referred to by others?
   ruby_whisper_params_free(rwp);
   free(rwp);
 }
 
+static size_t
+ruby_whisper_params_memsize(const void *p)
+{
+  const ruby_whisper_params *rwp = (const ruby_whisper_params *)p;
+
+  return sizeof(ruby_whisper_params) + sizeof(rwp->params) + sizeof(rwp->vad_params);
+}
+
+const rb_data_type_t ruby_whisper_params_type = {
+  "ruby_whisper_params",
+  {
+    rb_whisper_params_mark,
+    rb_whisper_params_free,
+    ruby_whisper_params_memsize,
+  },
+  0, 0,
+  0
+};
+
 static VALUE
 ruby_whisper_params_allocate(VALUE klass)
 {
   ruby_whisper_params *rwp;
-  rwp = ALLOC(ruby_whisper_params);
+  VALUE obj = TypedData_Make_Struct(klass, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
   rwp->diarize = false;
+  rwp->vad_params = TypedData_Wrap_Struct(cVADParams, &ruby_whisper_vad_params_type, (void *)&rwp->params.vad_params);
   rwp->new_segment_callback_container = rb_whisper_callback_container_allocate();
   rwp->progress_callback_container = rb_whisper_callback_container_allocate();
+  rwp->encoder_begin_callback_container = rb_whisper_callback_container_allocate();
   rwp->abort_callback_container = rb_whisper_callback_container_allocate();
-  return Data_Wrap_Struct(klass, rb_whisper_params_mark, rb_whisper_params_free, rwp);
+  return obj;
 }
 
 /*
@@ -212,7 +294,7 @@ static VALUE
 ruby_whisper_params_set_language(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   if (value == Qfalse || value == Qnil) {
     rwp->params.language = "auto";
   } else {
@@ -228,7 +310,7 @@ static VALUE
 ruby_whisper_params_get_language(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   if (rwp->params.language) {
     return rb_str_new2(rwp->params.language);
   } else {
@@ -465,7 +547,7 @@ static VALUE
 ruby_whisper_params_get_initial_prompt(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return rwp->params.initial_prompt == NULL ? Qnil : rb_str_new2(rwp->params.initial_prompt);
 }
 /*
@@ -476,7 +558,7 @@ static VALUE
 ruby_whisper_params_set_initial_prompt(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.initial_prompt = StringValueCStr(value);
   return value;
 }
@@ -490,7 +572,7 @@ static VALUE
 ruby_whisper_params_get_diarize(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   if (rwp->diarize) {
     return Qtrue;
   } else {
@@ -505,7 +587,7 @@ static VALUE
 ruby_whisper_params_set_diarize(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   if (value == Qfalse || value == Qnil) {
     rwp->diarize = false;
   } else {
@@ -524,7 +606,7 @@ static VALUE
 ruby_whisper_params_get_offset(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return INT2NUM(rwp->params.offset_ms);
 }
 /*
@@ -535,7 +617,7 @@ static VALUE
 ruby_whisper_params_set_offset(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.offset_ms = NUM2INT(value);
   return value;
 }
@@ -549,7 +631,7 @@ static VALUE
 ruby_whisper_params_get_duration(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return INT2NUM(rwp->params.duration_ms);
 }
 /*
@@ -560,7 +642,7 @@ static VALUE
 ruby_whisper_params_set_duration(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.duration_ms = NUM2INT(value);
   return value;
 }
@@ -575,7 +657,7 @@ static VALUE
 ruby_whisper_params_get_max_text_tokens(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return INT2NUM(rwp->params.n_max_text_ctx);
 }
 /*
@@ -586,7 +668,7 @@ static VALUE
 ruby_whisper_params_set_max_text_tokens(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.n_max_text_ctx = NUM2INT(value);
   return value;
 }
@@ -598,7 +680,7 @@ static VALUE
 ruby_whisper_params_get_temperature(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return DBL2NUM(rwp->params.temperature);
 }
 /*
@@ -609,7 +691,7 @@ static VALUE
 ruby_whisper_params_set_temperature(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.temperature = RFLOAT_VALUE(value);
   return value;
 }
@@ -623,7 +705,7 @@ static VALUE
 ruby_whisper_params_get_max_initial_ts(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return DBL2NUM(rwp->params.max_initial_ts);
 }
 /*
@@ -634,7 +716,7 @@ static VALUE
 ruby_whisper_params_set_max_initial_ts(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.max_initial_ts = RFLOAT_VALUE(value);
   return value;
 }
@@ -646,7 +728,7 @@ static VALUE
 ruby_whisper_params_get_length_penalty(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return DBL2NUM(rwp->params.length_penalty);
 }
 /*
@@ -657,7 +739,7 @@ static VALUE
 ruby_whisper_params_set_length_penalty(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.length_penalty = RFLOAT_VALUE(value);
   return value;
 }
@@ -669,7 +751,7 @@ static VALUE
 ruby_whisper_params_get_temperature_inc(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return DBL2NUM(rwp->params.temperature_inc);
 }
 /*
@@ -680,7 +762,7 @@ static VALUE
 ruby_whisper_params_set_temperature_inc(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.temperature_inc = RFLOAT_VALUE(value);
   return value;
 }
@@ -694,7 +776,7 @@ static VALUE
 ruby_whisper_params_get_entropy_thold(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return DBL2NUM(rwp->params.entropy_thold);
 }
 /*
@@ -705,7 +787,7 @@ static VALUE
 ruby_whisper_params_set_entropy_thold(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.entropy_thold = RFLOAT_VALUE(value);
   return value;
 }
@@ -717,7 +799,7 @@ static VALUE
 ruby_whisper_params_get_logprob_thold(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return DBL2NUM(rwp->params.logprob_thold);
 }
 /*
@@ -728,7 +810,7 @@ static VALUE
 ruby_whisper_params_set_logprob_thold(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.logprob_thold = RFLOAT_VALUE(value);
   return value;
 }
@@ -740,7 +822,7 @@ static VALUE
 ruby_whisper_params_get_no_speech_thold(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return DBL2NUM(rwp->params.no_speech_thold);
 }
 /*
@@ -751,7 +833,7 @@ static VALUE
 ruby_whisper_params_set_no_speech_thold(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->params.no_speech_thold = RFLOAT_VALUE(value);
   return value;
 }
@@ -759,7 +841,7 @@ static VALUE
 ruby_whisper_params_get_new_segment_callback(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return rwp->new_segment_callback_container->callback;
 }
 /*
@@ -776,7 +858,7 @@ static VALUE
 ruby_whisper_params_set_new_segment_callback(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->new_segment_callback_container->callback = value;
   return value;
 }
@@ -784,7 +866,7 @@ static VALUE
 ruby_whisper_params_get_new_segment_callback_user_data(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return rwp->new_segment_callback_container->user_data;
 }
 /*
@@ -797,7 +879,7 @@ static VALUE
 ruby_whisper_params_set_new_segment_callback_user_data(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->new_segment_callback_container->user_data = value;
   return value;
 }
@@ -805,7 +887,7 @@ static VALUE
 ruby_whisper_params_get_progress_callback(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return rwp->progress_callback_container->callback;
 }
 /*
@@ -824,7 +906,7 @@ static VALUE
 ruby_whisper_params_set_progress_callback(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->progress_callback_container->callback = value;
   return value;
 }
@@ -832,7 +914,7 @@ static VALUE
 ruby_whisper_params_get_progress_callback_user_data(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return rwp->progress_callback_container->user_data;
 }
 /*
@@ -845,15 +927,66 @@ static VALUE
 ruby_whisper_params_set_progress_callback_user_data(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->progress_callback_container->user_data = value;
   return value;
 }
+
+static VALUE
+ruby_whisper_params_get_encoder_begin_callback(VALUE self)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  return rwp->encoder_begin_callback_container->callback;
+}
+
+/*
+ * Sets encoder begin callback, called when the encoder starts.
+ *
+ *   params.encoder_begin_callback = ->(context, _, user_data) {
+ *     # ...
+ *   }
+ *
+ * call-seq:
+ *   encoder_begin_callback = callback -> callback
+ */
+static VALUE
+ruby_whisper_params_set_encoder_begin_callback(VALUE self, VALUE value)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  rwp->encoder_begin_callback_container->callback = value;
+  return value;
+}
+
+static VALUE
+ruby_whisper_params_get_encoder_begin_callback_user_data(VALUE self)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  return rwp->encoder_begin_callback_container->user_data;
+}
+
+/*
+ * Sets user data passed to the last argument of encoder begin callback.
+ *
+ * call-seq:
+ *   encoder_begin_callback_user_data = user_data -> use_data
+ */
+static VALUE
+ruby_whisper_params_set_encoder_begin_callback_user_data(VALUE self, VALUE value)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  rwp->encoder_begin_callback_container->user_data = value;
+  return value;
+}
+
 static VALUE
 ruby_whisper_params_get_abort_callback(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return rwp->abort_callback_container->callback;
 }
 /*
@@ -870,7 +1003,7 @@ static VALUE
 ruby_whisper_params_set_abort_callback(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->abort_callback_container->callback = value;
   return value;
 }
@@ -878,7 +1011,7 @@ static VALUE
 ruby_whisper_params_get_abort_callback_user_data(VALUE self)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   return rwp->abort_callback_container->user_data;
 }
 /*
@@ -891,9 +1024,72 @@ static VALUE
 ruby_whisper_params_set_abort_callback_user_data(VALUE self, VALUE value)
 {
   ruby_whisper_params *rwp;
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   rwp->abort_callback_container->user_data = value;
   return value;
+}
+
+/*
+ * call-seq:
+ *   vad = use_vad -> use_vad
+ */
+static VALUE
+ruby_whisper_params_get_vad(VALUE self)
+{
+  BOOL_PARAMS_GETTER(self, vad)
+}
+
+static VALUE
+ruby_whisper_params_set_vad(VALUE self, VALUE value)
+{
+  BOOL_PARAMS_SETTER(self, vad, value)
+}
+
+/*
+ * call-seq:
+ *   vad_model_path = model_path -> model_path
+ */
+static VALUE
+ruby_whisper_params_set_vad_model_path(VALUE self, VALUE value)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  if (NIL_P(value)) {
+    rwp->params.vad_model_path = NULL;
+    return value;
+  }
+  VALUE path = ruby_whisper_normalize_model_path(value);
+  rwp->params.vad_model_path = StringValueCStr(path);
+  return value;
+}
+
+static VALUE
+ruby_whisper_params_get_vad_model_path(VALUE self)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  return rwp->params.vad_model_path == NULL ? Qnil : rb_str_new2(rwp->params.vad_model_path);
+}
+
+/*
+ * call-seq:
+ *   vad_params = params -> params
+ */
+static VALUE
+ruby_whisper_params_set_vad_params(VALUE self, VALUE value)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  rwp->vad_params = value;
+  return value;
+}
+
+static VALUE
+ruby_whisper_params_get_vad_params(VALUE self)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  return rwp->vad_params;
 }
 
 #define SET_PARAM_IF_SAME(param_name) \
@@ -905,7 +1101,6 @@ ruby_whisper_params_set_abort_callback_user_data(VALUE self, VALUE value)
 static VALUE
 ruby_whisper_params_initialize(int argc, VALUE *argv, VALUE self)
 {
-
   VALUE kw_hash;
   VALUE values[RUBY_WHISPER_PARAMS_PARAM_NAMES_COUNT] = {Qundef};
   VALUE value;
@@ -919,7 +1114,7 @@ ruby_whisper_params_initialize(int argc, VALUE *argv, VALUE self)
   }
 
   rb_get_kwargs(kw_hash, param_names, 0, RUBY_WHISPER_PARAMS_PARAM_NAMES_COUNT, values);
-  Data_Get_Struct(self, ruby_whisper_params, rwp);
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
 
   for (i = 0; i < RUBY_WHISPER_PARAMS_PARAM_NAMES_COUNT; i++) {
     id = param_names[i];
@@ -958,8 +1153,13 @@ ruby_whisper_params_initialize(int argc, VALUE *argv, VALUE self)
       SET_PARAM_IF_SAME(new_segment_callback_user_data)
       SET_PARAM_IF_SAME(progress_callback)
       SET_PARAM_IF_SAME(progress_callback_user_data)
+      SET_PARAM_IF_SAME(encoder_begin_callback)
+      SET_PARAM_IF_SAME(encoder_begin_callback_user_data)
       SET_PARAM_IF_SAME(abort_callback)
       SET_PARAM_IF_SAME(abort_callback_user_data)
+      SET_PARAM_IF_SAME(vad)
+      SET_PARAM_IF_SAME(vad_model_path)
+      SET_PARAM_IF_SAME(vad_params)
     }
   }
 
@@ -981,10 +1181,10 @@ ruby_whisper_params_initialize(int argc, VALUE *argv, VALUE self)
 static VALUE
 ruby_whisper_params_on_new_segment(VALUE self)
 {
-  ruby_whisper_params *rws;
-  Data_Get_Struct(self, ruby_whisper_params, rws);
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   const VALUE blk = rb_block_proc();
-  rb_ary_push(rws->new_segment_callback_container->callbacks, blk);
+  rb_ary_push(rwp->new_segment_callback_container->callbacks, blk);
   return Qnil;
 }
 
@@ -1001,10 +1201,30 @@ ruby_whisper_params_on_new_segment(VALUE self)
 static VALUE
 ruby_whisper_params_on_progress(VALUE self)
 {
-  ruby_whisper_params *rws;
-  Data_Get_Struct(self, ruby_whisper_params, rws);
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   const VALUE blk = rb_block_proc();
-  rb_ary_push(rws->progress_callback_container->callbacks, blk);
+  rb_ary_push(rwp->progress_callback_container->callbacks, blk);
+  return Qnil;
+}
+
+/*
+ * Hook called when the encoder starts.
+ *
+ *   whisper.on_encoder_begin do
+ *     # ...
+ *   end
+ *
+ * call-seq:
+ *   on_encoder_begin { ... }
+ */
+static VALUE
+ruby_whisper_params_on_encoder_begin(VALUE self)
+{
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
+  const VALUE blk = rb_block_proc();
+  rb_ary_push(rwp->encoder_begin_callback_container->callbacks, blk);
   return Qnil;
 }
 
@@ -1025,10 +1245,10 @@ ruby_whisper_params_on_progress(VALUE self)
 static VALUE
 ruby_whisper_params_abort_on(VALUE self)
 {
-  ruby_whisper_params *rws;
-  Data_Get_Struct(self, ruby_whisper_params, rws);
+  ruby_whisper_params *rwp;
+  TypedData_Get_Struct(self, ruby_whisper_params, &ruby_whisper_params_type, rwp);
   const VALUE blk = rb_block_proc();
-  rb_ary_push(rws->abort_callback_container->callbacks, blk);
+  rb_ary_push(rwp->abort_callback_container->callbacks, blk);
   return Qnil;
 }
 
@@ -1068,10 +1288,16 @@ init_ruby_whisper_params(VALUE *mWhisper)
   DEFINE_PARAM(new_segment_callback_user_data, 25)
   DEFINE_PARAM(progress_callback, 26)
   DEFINE_PARAM(progress_callback_user_data, 27)
-  DEFINE_PARAM(abort_callback, 28)
-  DEFINE_PARAM(abort_callback_user_data, 29)
+  DEFINE_PARAM(encoder_begin_callback, 28)
+  DEFINE_PARAM(encoder_begin_callback_user_data, 29)
+  DEFINE_PARAM(abort_callback, 30)
+  DEFINE_PARAM(abort_callback_user_data, 31)
+  DEFINE_PARAM(vad, 32)
+  DEFINE_PARAM(vad_model_path, 33)
+  DEFINE_PARAM(vad_params, 34)
 
   rb_define_method(cParams, "on_new_segment", ruby_whisper_params_on_new_segment, 0);
   rb_define_method(cParams, "on_progress", ruby_whisper_params_on_progress, 0);
+  rb_define_method(cParams, "on_encoder_begin", ruby_whisper_params_on_encoder_begin, 0);
   rb_define_method(cParams, "abort_on", ruby_whisper_params_abort_on, 0);
 }
