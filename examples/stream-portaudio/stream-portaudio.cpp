@@ -8,11 +8,13 @@
 #include "whisper.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
-#include <fstream>
+
 #include <signal.h>
 #include <sndfile.h>
 
@@ -36,14 +38,14 @@ struct whisper_params {
     double keep_s    = 0.0;
     int32_t capture_id = 10;
     int32_t max_tokens = 32;
-    int32_t audio_ctx  = 768;
+    int32_t audio_ctx  = 0;
+    int32_t beam_size  = -1;
 
-    float vad_thold    = 0.5f;
-    float freq_thold   = 200.0f;
+    float vad_thold    = 0.6f;
+    float freq_thold   = 100.0f;
 
-    bool speed_up      = false;
     bool translate     = false;
-    bool no_fallback   = true;
+    bool no_fallback   = false;
     bool print_special = false;
     bool no_context    = true;
     bool no_timestamps = true;
@@ -75,9 +77,9 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
         else if (arg == "-c"    || arg == "--capture")       { params.capture_id    = std::stoi(argv[++i]); }
         else if (arg == "-mt"   || arg == "--max-tokens")    { params.max_tokens    = std::stoi(argv[++i]); }
         else if (arg == "-ac"   || arg == "--audio-ctx")     { params.audio_ctx     = std::stoi(argv[++i]); }
+        else if (arg == "-bs"   || arg == "--beam-size")     { params.beam_size     = std::stoi(argv[++i]); }
         else if (arg == "-vth"  || arg == "--vad-thold")     { params.vad_thold     = std::stof(argv[++i]); }
         else if (arg == "-fth"  || arg == "--freq-thold")    { params.freq_thold    = std::stof(argv[++i]); }
-        else if (arg == "-su"   || arg == "--speed-up")      { params.speed_up      = true; }
         else if (arg == "-tr"   || arg == "--translate")     { params.translate     = true; }
         else if (arg == "-nf"   || arg == "--no-fallback")   { params.no_fallback   = true; }
         else if (arg == "-ps"   || arg == "--print-special") { params.print_special = true; }
@@ -114,9 +116,9 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -c ID,    --capture ID    [%-7d] capture device ID\n",                              params.capture_id);
     fprintf(stderr, "  -mt N,    --max-tokens N  [%-7d] maximum number of tokens per audio chunk\n",       params.max_tokens);
     fprintf(stderr, "  -ac N,    --audio-ctx N   [%-7d] audio context size (0 - all)\n",                   params.audio_ctx);
+    fprintf(stderr, "  -bs N,    --beam-size N   [%-7d] beam size for beam search\n",                      params.beam_size);
     fprintf(stderr, "  -vth N,   --vad-thold N   [%-7.2f] voice activity detection threshold\n",           params.vad_thold);
     fprintf(stderr, "  -fth N,   --freq-thold N  [%-7.2f] high-pass frequency cutoff\n",                   params.freq_thold);
-    fprintf(stderr, "  -su,      --speed-up      [%-7s] speed up audio by x2 (reduced accuracy)\n",        params.speed_up ? "true" : "false");
     fprintf(stderr, "  -tr,      --translate     [%-7s] translate from source language to english\n",      params.translate ? "true" : "false");
     fprintf(stderr, "  -nf,      --no-fallback   [%-7s] do not use temperature fallback while decoding\n", params.no_fallback ? "true" : "false");
     fprintf(stderr, "  -ps,      --print-special [%-7s] print special tokens\n",                           params.print_special ? "true" : "false");
@@ -133,12 +135,13 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
 }
 
 int main(int argc, char ** argv) {
+    ggml_backend_load_all();
 
     signal(SIGINT, exit_handler);
 
     whisper_params params;
 
-   if (whisper_params_parse(argc, argv, params) == false) {
+    if (whisper_params_parse(argc, argv, params) == false) {
         return 1;
     }
 
@@ -149,6 +152,7 @@ int main(int argc, char ** argv) {
     const int n_samples_len  = (int)((params.length_s)*WHISPER_SAMPLE_RATE);
     const int n_samples_keep = (int)((params.keep_s  )*WHISPER_SAMPLE_RATE);
     const int n_samples_30s  = (int)((30.0           )*WHISPER_SAMPLE_RATE);
+
     const int vadleast_n_samples_len = n_samples_len;
 
     const bool use_vad = n_samples_step <= 0; // sliding window mode uses VAD
@@ -317,7 +321,7 @@ int main(int argc, char ** argv) {
 
         // run the inference
         {
-            whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+            whisper_full_params wparams = whisper_full_default_params(params.beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
 
             wparams.print_progress   = false;
             wparams.print_special    = params.print_special;
@@ -328,15 +332,15 @@ int main(int argc, char ** argv) {
             wparams.max_tokens       = params.max_tokens;
             wparams.language         = params.language.c_str();
             wparams.n_threads        = params.n_threads;
+            wparams.beam_search.beam_size = params.beam_size;
 
             wparams.audio_ctx        = params.audio_ctx;
-            wparams.speed_up         = params.speed_up;
 
             wparams.tdrz_enable      = params.tinydiarize; // [TDRZ]
 
             // disable temperature fallback
             wparams.temperature_inc  = -1.0f;
-            //wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
+            wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
 
             wparams.prompt_tokens    = params.no_context ? nullptr : prompt_tokens.data();
             wparams.prompt_n_tokens  = params.no_context ? 0       : (int)prompt_tokens.size();
@@ -397,6 +401,7 @@ int main(int argc, char ** argv) {
 
                         std::cout << output;
                         fflush(stdout);
+
                         if (params.fname_out.length() > 0) {
                             fout << output;
                         }
@@ -447,8 +452,6 @@ int main(int argc, char ** argv) {
 
     whisper_print_timings(ctx);
     whisper_free(ctx);
-
-    
 
     return 0;
 }
