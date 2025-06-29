@@ -7,7 +7,7 @@
 [![Conan Center](https://shields.io/conan/v/whisper-cpp)](https://conan.io/center/whisper-cpp)
 [![npm](https://img.shields.io/npm/v/whisper.cpp.svg)](https://www.npmjs.com/package/whisper.cpp/)
 
-Stable: [v1.7.5](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.7.5) / [Roadmap](https://github.com/orgs/ggml-org/projects/4/)
+Stable: [v1.7.6](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.7.6) / [Roadmap](https://github.com/orgs/ggml-org/projects/4/)
 
 High-performance inference of [OpenAI's Whisper](https://github.com/openai/whisper) automatic speech recognition (ASR) model:
 
@@ -80,7 +80,7 @@ Now build the [whisper-cli](examples/cli) example and transcribe an audio file l
 ```bash
 # build the project
 cmake -B build
-cmake --build build --config Release
+cmake --build build -j --config Release
 
 # transcribe an audio file
 ./build/bin/whisper-cli -f samples/jfk.wav
@@ -149,7 +149,7 @@ standard cmake setup with:
 ```bash
 # build with GGML_BLAS defined
 cmake -B build -DGGML_BLAS=1
-cmake --build build --config Release
+cmake --build build -j --config Release
 ./build/bin/whisper-cli [ .. etc .. ]
 ```
 
@@ -163,7 +163,7 @@ Here are the steps for creating and using a quantized model:
 ```bash
 # quantize a model with Q5_0 method
 cmake -B build
-cmake --build build --config Release
+cmake --build build -j --config Release
 ./build/bin/quantize models/ggml-base.en.bin models/ggml-base.en-q5_0.bin q5_0
 
 # run the examples as usual, specifying the quantized model file
@@ -489,7 +489,7 @@ You will need to have [sdl2](https://wiki.libsdl.org/SDL2/Installation) installe
 
 ```bash
 cmake -B build -DWHISPER_SDL2=ON
-cmake --build build --config Release
+cmake --build build -j --config Release
 ./build/bin/whisper-stream -m ./models/ggml-base.en.bin -t 8 --step 500 --length 5000
 ```
 
@@ -709,7 +709,9 @@ For more details, see the conversion script [models/convert-pt-to-ggml.py](model
 ## XCFramework
 The XCFramework is a precompiled version of the library for iOS, visionOS, tvOS,
 and macOS. It can be used in Swift projects without the need to compile the
-library from source. For examples:
+library from source. For example, the v1.7.5 version of the XCFramework can be
+used as follows:
+
 ```swift
 // swift-tools-version: 5.10
 // The swift-tools-version declares the minimum version of Swift required to build this package.

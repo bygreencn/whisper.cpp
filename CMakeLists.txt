@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5) # for add_link_options and implicit target directories.
 project("whisper.cpp" C CXX)
-project("whisper.cpp" VERSION 1.7.5)
+project("whisper.cpp" VERSION 1.7.6)
 include(CheckIncludeFileCXX)
 
 set(SOVERSION 1)
@@ -181,6 +181,10 @@ get_directory_property(WHISPER_TRANSIENT_DEFINES COMPILE_DEFINITIONS)
 
 set_target_properties(whisper PROPERTIES PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/whisper.h)
 install(TARGETS whisper LIBRARY PUBLIC_HEADER)
+
+target_compile_definitions(whisper PRIVATE
+    WHISPER_VERSION="${PROJECT_VERSION}"
+)
 
 configure_package_config_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/cmake/whisper-config.cmake.in

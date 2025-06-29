@@ -10,6 +10,7 @@ module Whisper
   type encoder_begin_callback = ^(Whisper::Context, void, Object user_data) -> void
   type abort_callback = ^(Whisper::Context, void, Object user_data) -> boolish
 
+  VERSION: String
   LOG_LEVEL_NONE: Integer
   LOG_LEVEL_INFO: Integer
   LOG_LEVEL_WARN: Integer
@@ -412,7 +413,7 @@ module Whisper
     end
 
     class ZipURI < URI
-      def cache: () -> String
+      def cache: () -> Pathname
       def clear_cache: () -> void
     end
   end
