@@ -79,46 +79,6 @@ extern "C" {
         LLAMA_VOCAB_TYPE_RWKV = 5, // RWKV tokenizer based on greedy tokenization
     };
 
-    // pre-tokenization types
-    enum llama_vocab_pre_type {
-        LLAMA_VOCAB_PRE_TYPE_DEFAULT        = 0,
-        LLAMA_VOCAB_PRE_TYPE_LLAMA3         = 1,
-        LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_LLM   = 2,
-        LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_CODER = 3,
-        LLAMA_VOCAB_PRE_TYPE_FALCON         = 4,
-        LLAMA_VOCAB_PRE_TYPE_MPT            = 5,
-        LLAMA_VOCAB_PRE_TYPE_STARCODER      = 6,
-        LLAMA_VOCAB_PRE_TYPE_GPT2           = 7,
-        LLAMA_VOCAB_PRE_TYPE_REFACT         = 8,
-        LLAMA_VOCAB_PRE_TYPE_COMMAND_R      = 9,
-        LLAMA_VOCAB_PRE_TYPE_STABLELM2      = 10,
-        LLAMA_VOCAB_PRE_TYPE_QWEN2          = 11,
-        LLAMA_VOCAB_PRE_TYPE_OLMO           = 12,
-        LLAMA_VOCAB_PRE_TYPE_DBRX           = 13,
-        LLAMA_VOCAB_PRE_TYPE_SMAUG          = 14,
-        LLAMA_VOCAB_PRE_TYPE_PORO           = 15,
-        LLAMA_VOCAB_PRE_TYPE_CHATGLM3       = 16,
-        LLAMA_VOCAB_PRE_TYPE_CHATGLM4       = 17,
-        LLAMA_VOCAB_PRE_TYPE_VIKING         = 18,
-        LLAMA_VOCAB_PRE_TYPE_JAIS           = 19,
-        LLAMA_VOCAB_PRE_TYPE_TEKKEN         = 20,
-        LLAMA_VOCAB_PRE_TYPE_SMOLLM         = 21,
-        LLAMA_VOCAB_PRE_TYPE_CODESHELL      = 22,
-        LLAMA_VOCAB_PRE_TYPE_BLOOM          = 23,
-        LLAMA_VOCAB_PRE_TYPE_GPT3_FINNISH   = 24,
-        LLAMA_VOCAB_PRE_TYPE_EXAONE         = 25,
-        LLAMA_VOCAB_PRE_TYPE_CHAMELEON      = 26,
-        LLAMA_VOCAB_PRE_TYPE_MINERVA        = 27,
-        LLAMA_VOCAB_PRE_TYPE_DEEPSEEK3_LLM  = 28,
-        LLAMA_VOCAB_PRE_TYPE_GPT4O          = 29,
-        LLAMA_VOCAB_PRE_TYPE_SUPERBPE       = 30,
-        LLAMA_VOCAB_PRE_TYPE_TRILLION       = 31,
-        LLAMA_VOCAB_PRE_TYPE_BAILINGMOE     = 32,
-        LLAMA_VOCAB_PRE_TYPE_LLAMA4         = 33,
-        LLAMA_VOCAB_PRE_TYPE_PIXTRAL        = 34,
-        LLAMA_VOCAB_PRE_TYPE_SEED_CODER     = 35,
-    };
-
     enum llama_rope_type {
         LLAMA_ROPE_TYPE_NONE   = -1,
         LLAMA_ROPE_TYPE_NORM   = 0,
@@ -390,6 +350,7 @@ extern "C" {
         void * imatrix;                       // pointer to importance matrix data
         void * kv_overrides;                  // pointer to vector containing overrides
         void * tensor_types;                  // pointer to vector containing tensor types
+        void * prune_layers;                  // pointer to vector containing layer indices to prune
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {
@@ -943,12 +904,14 @@ extern "C" {
     // Requires the context to have a memory.
     // For encode-decoder contexts, processes the batch using the decoder.
     // Positive return values does not mean a fatal error, but rather a warning.
-    // Upon non-zero return values, the memory state is restored to the state before this call
+    // Upon fatal-error or abort, the ubatches that managed to be been processed will remain in the memory state of the context
+    //   To handle this correctly, query the memory state using llama_memory_seq_pos_min() and llama_memory_seq_pos_max()
+    // Upon other return values, the memory state is restored to the state before this call
     //    0 - success
     //    1 - could not find a KV slot for the batch (try reducing the size of the batch or increase the context)
-    //    2 - aborted
+    //    2 - aborted     (processed ubatches will remain in the context's memory)
     //   -1 - invalid input batch
-    // < -1 - error
+    // < -1 - fatal error (processed ubatches will remain in the context's memory)
     LLAMA_API int32_t llama_decode(
             struct llama_context * ctx,
               struct llama_batch   batch);
