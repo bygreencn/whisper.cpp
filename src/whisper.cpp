@@ -1327,7 +1327,7 @@ static ggml_backend_t whisper_backend_init_gpu(const whisper_context_params & pa
         for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             ggml_backend_dev_t dev_cur = ggml_backend_dev_get(i);
             if (ggml_backend_dev_type(dev_cur) == GGML_BACKEND_DEVICE_TYPE_GPU) {
-                if (cnt == 0 || cnt == params.gpu_device) {
+                if (cnt == params.gpu_device) {
                     dev = dev_cur;
                 }
 
@@ -1396,7 +1396,7 @@ static buft_list_t make_buft_list(whisper_context_params & params) {
         for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             ggml_backend_dev_t dev = ggml_backend_dev_get(i);
             if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
-                if (cnt == 0 || cnt == params.gpu_device) {
+                if (cnt == params.gpu_device) {
                     auto * buft = ggml_backend_dev_buffer_type(dev);
                     if (buft) {
                         buft_list.emplace_back(dev, buft);
@@ -2432,6 +2432,8 @@ static bool whisper_encode_internal(
                 return false;
             }
         } else {
+            ggml_backend_sched_reset(sched);
+
 #if defined(WHISPER_USE_COREML)
             whisper_coreml_encode(wstate.ctx_coreml, mel->ne[0], mel->ne[1], (float *) mel->data, (float *) wstate.embd_enc->data);
 #elif defined(WHISPER_USE_OPENVINO)
