@@ -18,8 +18,6 @@
 //#include <format>
 // ---------------------------------------------------------------------
 // Some constants:
-const int       INPUT_CHANNEL             = 2;
-const double	INPUT_SAMPLE_RATE			= 48000.0;
 const int       OUTPUT_CHANNEL             = 1;
 const double	OUTPOUT_SAMPLE_RATE			= 16000;
 const int		FRAMES_PER_BUFFER	= 4800;
@@ -692,18 +690,21 @@ template<typename T>
 class AudioBuffer : public CircularQueue<T>
 {
 	public:
-    	AudioBuffer(size_t capacity, bool enable_rnnoise = true) : CircularQueue<T>(capacity), 
-                                        srcState(NULL), 
-                                        resample_outputBuffer(NULL), 
-                                        m_un8SaveAudioFlag(0)
+    	AudioBuffer(size_t capacity, bool enable_rnnoise = true, int input_channel=2, double input_sample_rate=48000.0) : CircularQueue<T>(capacity), 
+            _input_channel_(input_channel),
+            _input_sample_rate_(input_sample_rate),
+            srcState(NULL), 
+            resample_outputBuffer(NULL), 
+            m_un8SaveAudioFlag(0)
         {
-
+            _input_channel_ = input_channel;
+            _input_sample_rate_ = input_sample_rate;
 			srcState = src_new(SRC_SINC_BEST_QUALITY, 1, NULL);
 			if (!srcState) {
 				cout << "AudioBuffer::srcState was NULL!" << endl;
 			}
 
-			resample_outputBuffer = (float *)std::malloc((size_t)INPUT_SAMPLE_RATE*2*sizeof(float));
+			resample_outputBuffer = (float *)std::malloc((size_t)_input_sample_rate_ *2*sizeof(float));
 			if( resample_outputBuffer == NULL )
 			{
 				cout << "AudioBuffer::resample_outputBuffer was NULL!" << endl;
@@ -714,7 +715,7 @@ class AudioBuffer : public CircularQueue<T>
 			src_data.input_frames = 0;
 			src_data.output_frames = 0;
 			src_data.end_of_input = 0;
-			src_data.src_ratio = (double)OUTPOUT_SAMPLE_RATE / INPUT_SAMPLE_RATE;
+			src_data.src_ratio = (double)OUTPOUT_SAMPLE_RATE / _input_sample_rate_;
 
 
             m_bEnableRnnoise = enable_rnnoise;
@@ -858,12 +859,12 @@ class AudioBuffer : public CircularQueue<T>
             if(m_un8SaveAudioFlag & SAVE_AUDIO_RAW)
             {
                 std::string filename = std::string(buffer) + "_raw.wav";
-                wavWriterRaw.open(filename, (uint32_t)INPUT_SAMPLE_RATE, 32, 1);
+                wavWriterRaw.open(filename, (uint32_t)(this->_input_sample_rate_), 32, 1);
             }
             if (this->m_bEnableRnnoise && m_un8SaveAudioFlag & SAVE_AUDIO_RNNOISED)
             {
                 std::string filename = std::string(buffer) + "_rnnoise.wav";
-                wavWriterRnnoised.open(filename, (uint32_t)INPUT_SAMPLE_RATE, 32, 1);
+                wavWriterRnnoised.open(filename, (uint32_t)(this->_input_sample_rate_), 32, 1);
             }
             if (m_un8SaveAudioFlag & SAVE_AUDIO_RESAMPLED)
             {
@@ -878,6 +879,8 @@ class AudioBuffer : public CircularQueue<T>
         }
 
 	private:
+		int _input_channel_;
+		double _input_sample_rate_;
         // Sample Rate conveter
 		SRC_STATE          *srcState;
     	float              *resample_outputBuffer;
@@ -930,6 +933,8 @@ public:
     }
 
 private:
+
+	void print_device_info();
     portaudio::AutoSystem mautoSys;
     portaudio::DirectionSpecificStreamParameters * m_pInParamsRecord;
     portaudio::StreamParameters * m_pParamsRecord;

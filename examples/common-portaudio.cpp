@@ -14,6 +14,10 @@
 #include "common-portaudio.h"
 #include "portaudiocpp/PortAudioCpp.hxx"
 
+#ifdef WIN32
+#include <windows.h>
+#endif
+
 
 audio_async::audio_async() 
     : m_psys(NULL), 
@@ -24,7 +28,11 @@ audio_async::audio_async()
     m_pAudioBuffer(NULL)
 {
     m_psys = &portaudio::System::instance();
+#ifdef WIN32
+    setlocale(LC_ALL, "");
+#endif
 }
+
 
 audio_async::~audio_async() {
     if(m_pParamsRecord)
@@ -49,14 +57,61 @@ audio_async::~audio_async() {
     }
 }
 
+
+// Convert a UTF-8 string to UTF-16 (wchar_t)
+std::wstring UTF8StringToWString(const std::string& utf8Str) {
+    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, utf8Str.c_str(), -1, nullptr, 0);
+    std::wstring utf16Str(sizeNeeded, 0);
+    MultiByteToWideChar(CP_UTF8, 0, utf8Str.c_str(), -1, &utf16Str[0], sizeNeeded);
+    return utf16Str;
+}
+
+// Convert a UTF-16 (wchar_t) string to UTF-8
+std::string utf16ToUtf8(const std::wstring& utf16Str) {
+    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, utf16Str.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string utf8Str(sizeNeeded, 0);
+    WideCharToMultiByte(CP_UTF8, 0, utf16Str.c_str(), -1, &utf8Str[0], sizeNeeded, nullptr, nullptr);
+    return utf8Str;
+}
+
+void audio_async::print_device_info()
+{
+    std::cout << std::string(80, '*') << std::endl;
+    for (portaudio::System::DeviceIterator i = m_psys->devicesBegin(); i != m_psys->devicesEnd(); ++i)
+    {
+        std::string strDetails = "";
+        if ((*i).isSystemDefaultInputDevice())
+            strDetails += "default input";
+        if ((*i).isSystemDefaultOutputDevice())
+            strDetails += "default output";
+
+        char device_info[512];
+        sprintf_s(device_info, 512,
+            "%d: %s, in=%d, out=%d, %s, %s",
+            (*i).index(),
+            (*i).name(),
+            (*i).maxInputChannels(),
+            (*i).maxOutputChannels(),
+            (*i).hostApi().name(),
+            strDetails.c_str());
+
+#ifdef WIN32
+        std::wcout << UTF8StringToWString(device_info) << std::endl;
+#else
+        std::cout << device_info << std::endl;
+#endif
+    }
+    std::cout << std::string(80, '*') << std::endl << std::endl;
+}
+
 bool audio_async::init(int iInputDevice, uint8_t save_audio, bool enable_rnnoise){
 
     try
 	{
-        // List out all the devices we have    
+        // List out all the devices we have   
+        print_device_info();
+
         int 	iNumDevices 		= m_psys->deviceCount();
-
-
         std::cout << "Number of devices = " << iNumDevices << std::endl;		
         if ((iInputDevice >= 0) && (iInputDevice >= iNumDevices))
         {
@@ -64,36 +119,27 @@ bool audio_async::init(int iInputDevice, uint8_t save_audio, bool enable_rnnoise
             return false;
         }
 
-#ifdef __DEBUG__  
-        string	strDetails			= "";
+		int input_channel = m_psys->deviceByIndex(iInputDevice).maxInputChannels();
+		double input_sample_rate = m_psys->deviceByIndex(iInputDevice).defaultSampleRate();
 
-        for (portaudio::System::DeviceIterator i = m_psys->devicesBegin(); i != m_psys->devicesEnd(); ++i)
-        {
-            strDetails = "";
-            if ((*i).isSystemDefaultInputDevice())
-                strDetails += ", default input";
-            if ((*i).isSystemDefaultOutputDevice())
-                strDetails += ", default output";
-
-            std::cout << (*i).index() << ": " << (*i).name() << ", ";
-            std::cout << "in=" << (*i).maxInputChannels() << " ";
-            std::cout << "out=" << (*i).maxOutputChannels() << ", ";
-            std::cout << (*i).hostApi().name();
-
-            std::cout << strDetails.c_str() << std::endl;
-        }
-#endif
-        m_pAudioBuffer = new AudioBuffer<float>((size_t)(OUTPOUT_SAMPLE_RATE * 300), enable_rnnoise);
+        m_pAudioBuffer = new AudioBuffer<float>((size_t)(OUTPOUT_SAMPLE_RATE * 300), enable_rnnoise, input_channel, input_sample_rate);
         
         if (NULL == m_pAudioBuffer)
             return false;
    
         m_pAudioBuffer->setSaveAudioFlag(save_audio);
 
-        cout << "Opening recording input stream on " << m_psys->deviceByIndex(iInputDevice).name() << endl;
+
+#ifdef WIN32
+        std::wcout << L"Opening recording input stream on " << UTF8StringToWString(m_psys->deviceByIndex(iInputDevice).name()) << std::endl;
+#else
+        std::cout << "Opening recording input stream on " << m_psys->deviceByIndex(iInputDevice).name() << std::endl;
+#endif // WIN32
+
+        
         m_pInParamsRecord = new portaudio::DirectionSpecificStreamParameters(
 			m_psys->deviceByIndex(iInputDevice), 
-			INPUT_CHANNEL, 
+            input_channel,
 			portaudio::FLOAT32, 
 			false, 
 			m_psys->deviceByIndex(iInputDevice).defaultLowInputLatency(), 
@@ -102,7 +148,7 @@ bool audio_async::init(int iInputDevice, uint8_t save_audio, bool enable_rnnoise
         m_pParamsRecord = new portaudio::StreamParameters(
 			*m_pInParamsRecord, 
 			portaudio::DirectionSpecificStreamParameters::null(), 
-			INPUT_SAMPLE_RATE, 
+            input_sample_rate,
 			FRAMES_PER_BUFFER, 
 			paClipOff
 			);		
