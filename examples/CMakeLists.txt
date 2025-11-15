@@ -189,7 +189,7 @@ if (WHISPER_portaudio)
     
 
     include(DefaultTargetOptions)
-    target_link_libraries(common-portaudio PUBLIC onnxruntime::onnxruntime SampleRate::samplerate SndFile::sndfile PortAudio::PortAudio PortAudio::portaudiocpp rnnoise::rnnoise winmm dsound setupapi ole32 uuid)
+    target_link_libraries(common-portaudio PUBLIC onnxruntime::onnxruntime SampleRate::samplerate SndFile::sndfile PortAudio::portaudio PortAudio::portaudiocpp rnnoise::rnnoise winmm dsound setupapi ole32 uuid)
     set_target_properties(common-portaudio PROPERTIES POSITION_INDEPENDENT_CODE ON)
   
     #add_example(record_resample_file)

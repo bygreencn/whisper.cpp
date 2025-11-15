@@ -51,7 +51,7 @@ struct whisper_params {
     bool no_timestamps = true;
     bool tinydiarize   = false;
     uint8_t save_audio    = 0; // save audio to wav file
-    bool use_gpu       = false;
+    bool use_gpu       = true;
     bool flash_attn    = false;
 
     std::string language  = "zh";
