@@ -935,6 +935,9 @@ public:
 private:
 
 	void print_device_info();
+    void print_working_microphones();
+	int print_loopback_devices();
+    bool checkIfLoopback(const portaudio::Device& device);
     portaudio::AutoSystem mautoSys;
     portaudio::DirectionSpecificStreamParameters * m_pInParamsRecord;
     portaudio::StreamParameters * m_pParamsRecord;

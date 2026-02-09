@@ -104,15 +104,96 @@ void audio_async::print_device_info()
     std::cout << std::string(80, '*') << std::endl << std::endl;
 }
 
-bool audio_async::init(int iInputDevice, uint8_t save_audio, bool enable_rnnoise){
+void audio_async::print_working_microphones()
+{
+    
+    std::cout << std::string(80, '*') << std::endl;
+    for (portaudio::System::DeviceIterator i = m_psys->devicesBegin(); i != m_psys->devicesEnd(); ++i)
+    {
+        std::string strDetails = "";
+        if ((*i).maxInputChannels() > 0)
+        {
+            std::string strDetails = "";
+            if ((*i).isSystemDefaultInputDevice())
+                strDetails += "default input";
+            if ((*i).isSystemDefaultOutputDevice())
+                strDetails += "default output";
 
+            char device_info[512];
+            sprintf_s(device_info, 512,
+                "%d: %s, in=%d, out=%d, %s, %s",
+                (*i).index(),
+                (*i).name(),
+                (*i).maxInputChannels(),
+                (*i).maxOutputChannels(),
+                (*i).hostApi().name(),
+                strDetails.c_str());
+
+#ifdef WIN32
+            std::wcout << UTF8StringToWString(device_info) << std::endl;
+#else
+            std::cout << device_info << std::endl;
+#endif
+        }
+    }
+    std::cout << std::string(80, '*') << std::endl << std::endl;
+}
+
+bool audio_async::checkIfLoopback(const portaudio::Device& device) {
+    // Get the underlying C device index
+    PaDeviceIndex index = device.index();
+
+    // Use the C API function
+    return PaWasapi_IsLoopback(index) != 0;
+}
+
+int audio_async::print_loopback_devices()
+{
+	int loopback_device_index=-1;
+    std::cout << std::string(80, '*') << std::endl;
+    for (portaudio::System::DeviceIterator i = m_psys->devicesBegin(); i != m_psys->devicesEnd(); ++i)
+    {
+        std::string strDetails = "";
+        if ((*i).maxInputChannels() > 0)
+        {
+            std::string strDetails = "";
+			if ((*i).maxInputChannels() > 0 && (*i).hostApi().typeId() == paWASAPI && checkIfLoopback(*i))
+            {
+                strDetails += "loopback device";
+                char device_info[512];
+                sprintf_s(device_info, 512,
+                    "%d: %s, in=%d, out=%d, %s, %s",
+                    (*i).index(),
+                    (*i).name(),
+                    (*i).maxInputChannels(),
+                    (*i).maxOutputChannels(),
+                    (*i).hostApi().name(),
+                    strDetails.c_str());
+
+#ifdef WIN32
+                std::wcout << UTF8StringToWString(device_info) << std::endl;
+#else
+                std::cout << device_info << std::endl;
+#endif
+				loopback_device_index = (*i).index();
+            }
+        }
+    }
+    std::cout << std::string(80, '*') << std::endl << std::endl;
+
+    return loopback_device_index;
+}
+bool audio_async::init(int iInputDevice, uint8_t save_audio, bool enable_rnnoise)
+{
     try
 	{
         // List out all the devices we have   
-        print_device_info();
+        print_working_microphones();
 
-        int 	iNumDevices 		= m_psys->deviceCount();
-        std::cout << "Number of devices = " << iNumDevices << std::endl;		
+        if (iInputDevice < 0)
+            iInputDevice = print_loopback_devices();
+
+        int iNumDevices = m_psys->deviceCount();	
         if ((iInputDevice >= 0) && (iInputDevice >= iNumDevices))
         {
             std::cout << "Input device index out of range!" << std::endl;
