@@ -150,6 +150,7 @@ bool audio_async::checkIfLoopback(const portaudio::Device& device) {
 int audio_async::print_loopback_devices()
 {
 	int loopback_device_index=-1;
+	int loopback_device_count = 0;
     std::cout << std::string(80, '*') << std::endl;
     for (portaudio::System::DeviceIterator i = m_psys->devicesBegin(); i != m_psys->devicesEnd(); ++i)
     {
@@ -176,10 +177,22 @@ int audio_async::print_loopback_devices()
                 std::cout << device_info << std::endl;
 #endif
 				loopback_device_index = (*i).index();
+                loopback_device_count++;
             }
         }
     }
     std::cout << std::string(80, '*') << std::endl << std::endl;
+
+    if(loopback_device_count != 1)
+    {
+        loopback_device_index = -1;
+        std::cout << "Please select the device index for audio input:" << std::endl;
+        int result = std::scanf("%d", &loopback_device_index);
+
+        if (result == 1) {
+            std::printf("You entered: loopback_device_index = %d\n", loopback_device_index);
+        }
+	}
 
     return loopback_device_index;
 }
