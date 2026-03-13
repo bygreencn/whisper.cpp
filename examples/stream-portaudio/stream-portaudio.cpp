@@ -17,7 +17,42 @@
 
 #include <signal.h>
 #include <sndfile.h>
+#include <iostream>
+#include <memory>
+#include <locale>
 
+#define ENABLE_OLLAMA_TRANSLATE
+
+#ifdef ENABLE_OLLAMA_TRANSLATE
+#include "ollama.hpp"
+
+std::string UTF8ToGBK(const std::string& strUTF8) {
+    int len = MultiByteToWideChar(CP_UTF8, 0, strUTF8.c_str(), -1, NULL, 0);
+    std::vector<wchar_t> wstr(len);
+    MultiByteToWideChar(CP_UTF8, 0, strUTF8.c_str(), -1, wstr.data(), len);
+
+    len = WideCharToMultiByte(936, 0, wstr.data(), -1, NULL, 0, NULL, NULL);
+    std::vector<char> strGBK(len);
+    WideCharToMultiByte(936, 0, wstr.data(), -1, strGBK.data(), len, NULL, NULL);
+
+    return std::string(strGBK.data());
+}
+
+inline std::string ollama_translate(std::string source)
+{
+    //ollama::show_requests(true);
+    //ollama::show_replies(true);
+
+    // Exceptions can be dynamically enabled and disabled through this call.
+    // If exceptions are true, ollama::exception will be thrown in the event of errors. If exceptions are false, functions will either return false or empty values.
+    ollama::allow_exceptions(true);
+
+    std::ostringstream prompt;
+    prompt << "Translate the following text from English to Simple Chinese. Return only the direct translation without any explanation. Here is the text to translate:\n" << source;
+
+    return UTF8ToGBK(ollama::generate("translategemma", prompt.str()).as_simple_string());
+}
+#endif
 
 //#define USE_SILERO_VAD
 
@@ -244,6 +279,7 @@ int main(int argc, char ** argv) {
 
     auto t_last  = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
+    std::string elder_text;
 
     // main audio loop
     while (is_running) {
@@ -381,7 +417,17 @@ int main(int argc, char ** argv) {
                     const char * text = whisper_full_get_segment_text(ctx, i);
 
                     if (params.no_timestamps) {
+
+                        if (text == elder_text) {
+                            continue;
+                        }
+                        else {
+                            elder_text = text;
+                        }
                         std::cout << "**" << text << std::endl;
+#ifdef ENABLE_OLLAMA_TRANSLATE
+                        std::cout << "**" << ollama_translate(text) << std::endl;
+#endif
                         fflush(stdout);
 
                         if (params.fname_out.length() > 0) {
