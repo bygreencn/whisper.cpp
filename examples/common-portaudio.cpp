@@ -12,6 +12,7 @@
 #include <string>
 #include <stdexcept>
 #include "common-portaudio.h"
+#include "pa_win_wasapi.h"
 #include "portaudiocpp/PortAudioCpp.hxx"
 
 #ifdef WIN32

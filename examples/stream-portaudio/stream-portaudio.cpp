@@ -26,6 +26,8 @@
 #ifdef ENABLE_OLLAMA_TRANSLATE
 #include "ollama.hpp"
 
+BOOL OLLAMA_ERROR_FLAG = TRUE;
+
 std::string UTF8ToGBK(const std::string& strUTF8) {
     int len = MultiByteToWideChar(CP_UTF8, 0, strUTF8.c_str(), -1, NULL, 0);
     std::vector<wchar_t> wstr(len);
@@ -426,7 +428,15 @@ int main(int argc, char ** argv) {
                         }
                         std::cout << "**" << text << std::endl;
 #ifdef ENABLE_OLLAMA_TRANSLATE
-                        std::cout << "**" << ollama_translate(text) << std::endl;
+                        try {
+                            std::cout << "**" << ollama_translate(text) << std::endl;
+                        } catch (const std::exception& e) {
+                            if( OLLAMA_ERROR_FLAG ){
+                                std::cerr << "Translation error: " << e.what() << std::endl;
+                                OLLAMA_ERROR_FLAG = FALSE;
+							}
+						}
+                        
 #endif
                         fflush(stdout);
 
