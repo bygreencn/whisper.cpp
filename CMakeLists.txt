@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5) # for add_link_options and implicit target directories.
 project("whisper.cpp" C CXX)
-project("whisper.cpp" VERSION 1.8.5)
+project("whisper.cpp" VERSION 1.8.6)
 include(CheckIncludeFileCXX)
 
 set(SOVERSION 1)
@@ -89,7 +89,7 @@ option(WHISPER_SampleRate   "whisper: support for libSampleRate" OFF)
 option(WHISPER_sndfile      "whisper: support for libsndfile" OFF)
 
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
-    option(WHISPER_FFMPEG "whisper: support building and linking with ffmpeg libs (avcodec, swresample, ...)" OFF)
+    option(WHISPER_COMMON_FFMPEG "whisper: examples link with ffmpeg libs in order to decode more audio formats" OFF)
 endif()
 
 option(WHISPER_COREML                "whisper: enable Core ML framework"  OFF)
@@ -125,6 +125,7 @@ whisper_option_depr(WARNING     WHISPER_RPC                 GGML_RPC)
 whisper_option_depr(WARNING     WHISPER_SYCL                GGML_SYCL)
 whisper_option_depr(WARNING     WHISPER_SYCL_F16            GGML_SYCL_F16)
 whisper_option_depr(WARNING     WHISPER_CCACHE              GGML_CCACHE)
+whisper_option_depr(WARNING     WHISPER_FFMPEG              WHISPER_COMMON_FFMPEG)
 
 if (GGML_CUDA AND NOT MSVC)
     #GGML_CUDA enabled, add the necessary compile options -Wno-deprecated-gpu-targets
@@ -212,7 +213,7 @@ configure_file(cmake/whisper.pc.in
         @ONLY)
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/whisper.pc"
-        DESTINATION lib/pkgconfig)
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 #
 # programs, examples and tests

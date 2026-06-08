@@ -1,13 +1,15 @@
 name: Examples Tests
 on:
   push:
+    branches:
+      - master
     paths:
       - examples/addon.node/**
-      - whisper.h
+      - include/whisper.h
   pull_request:
     paths:
       - examples/addon.node/**
-      - whisper.h
+      - include/whisper.h
 
 jobs:
   addon_node-ubuntu-22:
@@ -40,6 +42,8 @@ jobs:
         run: npx cmake-js compile -T addon.node -B Release
 
       - name: Download test model
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           bash ./models/download-ggml-model.sh base.en
       - name: Test
