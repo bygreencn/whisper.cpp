@@ -13,8 +13,6 @@ on:
         type: string
 
   push:
-    branches:
-      - master
     tags:
       - 'v*'
 
@@ -38,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout with full history
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
@@ -100,7 +98,7 @@ jobs:
 
     steps:
       - name: Clone
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
@@ -117,9 +115,11 @@ jobs:
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+            -DGGML_BACKEND_DL=ON \
             -DGGML_NATIVE=OFF \
-            ${{ matrix.build == 'arm64' && '-DGGML_CPU_ARM_ARCH=armv8-a' || '' }}
+            ${{ matrix.build == 'x64' && '-DGGML_CPU_ALL_VARIANTS=ON' || '-DGGML_CPU_ARM_ARCH=armv8-a' }}
           cmake --build build --config Release -j $(nproc)
 
       - name: Pack artifacts
@@ -130,7 +130,7 @@ jobs:
             -C ./build/bin .
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           path: whisper-bin-ubuntu-${{ matrix.build }}.tar.gz
           name: whisper-bin-ubuntu-${{ matrix.build }}.tar.gz
@@ -156,10 +156,10 @@ jobs:
 
     steps:
       - name: Clone
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
 
       - name: Fetch SDL2 and set SDL2_DIR
         if: matrix.sdl2 == 'ON'
@@ -175,7 +175,7 @@ jobs:
           -DBUILD_SHARED_LIBS=ON
           -DWHISPER_SDL2=${{ matrix.sdl2 }}
           -DGGML_NATIVE=OFF
-          -DGGML_BMI2=OFF
+          ${{ matrix.arch == 'x64' && '-DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON' || '-DGGML_BMI2=OFF' }}
 
       - name: Build
         run: |
@@ -188,32 +188,32 @@ jobs:
 
       - name: Upload SDL2.dll
         if: matrix.sdl2 == 'ON'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.s2arc }}_SDL2.dll
           path: build/bin/${{ matrix.build }}/SDL2.dll
 
       - name: Upload whisper dll
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: whisper_${{ matrix.arch }}.dll
           path: build/bin/${{ matrix.build }}/whisper.dll
 
       - name: Upload ggml dll
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ggml_${{ matrix.arch }}.dll
           path: build/bin/${{ matrix.build }}/ggml.dll
           overwrite: true
 
       - name: Upload ggml base dll
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ggml_base_${{ matrix.arch }}.dll
           path: build/bin/${{ matrix.build }}/ggml-base.dll
 
       - name: Upload ggml cpu dll
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ggml_cpu_${{ matrix.arch }}.dll
           path: build/bin/${{ matrix.build }}/ggml-cpu.dll
@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload binaries
         if: matrix.sdl2 == 'ON' && ${{ needs.determine-tag.outputs.should_release }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: whisper-bin-${{ matrix.arch }}.zip
           path: whisper-bin-${{ matrix.arch }}.zip
@@ -253,17 +253,17 @@ jobs:
 
     steps:
       - name: Clone
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
 
       - name: Install OpenBLAS and pkgconfiglite
         if: matrix.blas == 'ON'
@@ -289,6 +289,8 @@ jobs:
           -DBLAS_LIBRARIES="$env:GITHUB_WORKSPACE/OpenBLAS-${{matrix.blasver}}/lib/libopenblas.lib"
           -DBLAS_INCLUDE_DIRS="$env:GITHUB_WORKSPACE/OpenBLAS-${{matrix.blasver}}/include"
           -DWHISPER_SDL2=${{ matrix.sdl2 }}
+          -DGGML_NATIVE=OFF
+          ${{ matrix.arch == 'x64' && '-DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON' || '-DGGML_BMI2=OFF' }}
 
       - name: Build
         run: |
@@ -310,7 +312,7 @@ jobs:
 
       - name: Upload binaries
         if: matrix.blas == 'ON' && matrix.sdl2 == 'ON' && ${{ needs.determine-tag.outputs.should_release }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: whisper-blas-bin-${{ matrix.arch }}.zip
           path: whisper-blas-bin-${{ matrix.arch }}.zip
@@ -332,7 +334,7 @@ jobs:
             sdl2_ver: 2.28.5
     steps:
       - name: Clone repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Ninja
         id: install_ninja
@@ -459,7 +461,7 @@ jobs:
           echo "CUDA_PATH_V12_2=$CUDA_TOOLKIT_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Add msbuild to PATH
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
 
       - name: Install 7-Zip
         run: choco install 7zip -y
@@ -492,7 +494,10 @@ jobs:
             -DWHISPER_SDL2=${{ matrix.sdl2 }} ^
             -DSDL2_DIR="%SDL2_DIR%" ^
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ^
-            -DCMAKE_CUDA_FLAGS="%CUDA_FLAGS%"
+            -DCMAKE_CUDA_FLAGS="%CUDA_FLAGS%" ^
+            -DGGML_BACKEND_DL=ON ^
+            -DGGML_NATIVE=OFF ^
+            -DGGML_CPU_ALL_VARIANTS=ON
           set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
           cmake --build build --config ${{ matrix.build }} -j %NUMBER_OF_PROCESSORS%
 
@@ -516,7 +521,7 @@ jobs:
 
       - name: Upload binaries
         if: ${{ needs.determine-tag.outputs.should_release }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: whisper-cublas-${{ matrix.cuda-toolkit }}-bin-${{ matrix.arch }}.zip
           path: whisper-cublas-${{ matrix.cuda-toolkit }}-bin-${{ matrix.arch }}.zip
@@ -531,7 +536,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Configure
         run: |
@@ -573,7 +578,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ needs.determine-tag.outputs.should_release }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           path: whisper-${{ needs.determine-tag.outputs.tag_name }}-xcframework.zip
           name: whisper-${{ needs.determine-tag.outputs.tag_name }}-xcframework.zip
@@ -594,7 +599,7 @@ jobs:
     steps:
       - name: Clone
         id: checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
@@ -607,7 +612,7 @@ jobs:
       # Downloads all the artifacts from the previous jobs
       - name: Download artifacts
         id: download-artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: ./artifact
 
@@ -627,7 +632,7 @@ jobs:
 
       - name: Upload release
         id: upload_release
-        uses: actions/github-script@v3
+        uses: actions/github-script@ffc2c79a5b2490bd33e0a41c1de74b877714d736 # v3
         with:
           github-token: ${{secrets.GITHUB_TOKEN}}
           script: |
