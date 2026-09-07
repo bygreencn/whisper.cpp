@@ -2,6 +2,14 @@
 //
 // A very quick-n-dirty implementation serving mainly as a proof of concept.
 //
+
+#define ENABLE_OLLAMA_TRANSLATE
+
+#ifdef ENABLE_OLLAMA_TRANSLATE
+#include "ollama.hpp"
+#endif //ENABLE_OLLAMA_TRANSLATE
+
+
 #include "common-portaudio.h"
 #include "common.h"
 #include "common-whisper.h"
@@ -21,24 +29,10 @@
 #include <memory>
 #include <locale>
 
-#define ENABLE_OLLAMA_TRANSLATE
 
 #ifdef ENABLE_OLLAMA_TRANSLATE
-#include "ollama.hpp"
 
 BOOL OLLAMA_ERROR_FLAG = TRUE;
-
-std::string UTF8ToGBK(const std::string& strUTF8) {
-    int len = MultiByteToWideChar(CP_UTF8, 0, strUTF8.c_str(), -1, NULL, 0);
-    std::vector<wchar_t> wstr(len);
-    MultiByteToWideChar(CP_UTF8, 0, strUTF8.c_str(), -1, wstr.data(), len);
-
-    len = WideCharToMultiByte(936, 0, wstr.data(), -1, NULL, 0, NULL, NULL);
-    std::vector<char> strGBK(len);
-    WideCharToMultiByte(936, 0, wstr.data(), -1, strGBK.data(), len, NULL, NULL);
-
-    return std::string(strGBK.data());
-}
 
 inline std::string ollama_translate(std::string source)
 {
@@ -52,7 +46,7 @@ inline std::string ollama_translate(std::string source)
     std::ostringstream prompt;
     prompt << "Translate the following text from English to Simple Chinese. Return only the direct translation without any explanation. Here is the text to translate:\n" << source;
 
-    return UTF8ToGBK(ollama::generate("translategemma", prompt.str()).as_simple_string());
+    return string_encoding_utility::utf8_to_gbk(ollama::generate("translategemma", prompt.str()).as_simple_string());
 }
 #endif
 
@@ -69,7 +63,7 @@ void exit_handler(int signo) {
 
 // command-line parameters
 struct whisper_params {
-    int32_t n_threads  = std::min(2, (int32_t) std::thread::hardware_concurrency());
+    int32_t n_threads  = (std::min)(2, (int32_t) std::thread::hardware_concurrency());
     double step_s    = 15;
     double length_s  = 30;
     double keep_s    = 0.0;
@@ -182,8 +176,8 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    params.keep_s   = std::min(params.keep_s,   params.step_s);
-    params.length_s = std::max(params.length_s, params.step_s);
+    params.keep_s   = (std::min)(params.keep_s,   params.step_s);
+    params.length_s = (std::max)(params.length_s, params.step_s);
 
     const int n_samples_step = (int)((params.step_s  )*WHISPER_SAMPLE_RATE);
     const int n_samples_len  = (int)((params.length_s)*WHISPER_SAMPLE_RATE);
@@ -227,6 +221,10 @@ int main(int argc, char ** argv) {
     cparams.flash_attn = params.flash_attn;
 
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
+    if (ctx == nullptr) {
+        fprintf(stderr, "error: failed to initialize whisper context\n");
+        return 2;
+    }
 
     std::vector<float> pcmf32    (n_samples_30s, 0.0f);
     std::vector<float> pcmf32_old;
@@ -312,7 +310,7 @@ int main(int argc, char ** argv) {
             const int n_samples_new = (int)pcmf32_new.size();
 
             // take up to params.length_ms audio from previous iteration
-            const int n_samples_take = std::min((int) pcmf32_old.size(), std::max(0, n_samples_keep + n_samples_len - n_samples_new));
+            const int n_samples_take = (std::min)((int) pcmf32_old.size(), (std::max)(0, n_samples_keep + n_samples_len - n_samples_new));
 
             //printf("processing: take = %d, new = %d, old = %d\n", n_samples_take, n_samples_new, (int) pcmf32_old.size());
 
@@ -426,10 +424,13 @@ int main(int argc, char ** argv) {
                         else {
                             elder_text = text;
                         }
-                        std::cout << "**" << text << std::endl;
+                        std::cout << "??" << string_encoding_utility::utf8_to_gbk(text) << std::endl;
+						std::wstring wtext = string_encoding_utility::remove_repeated_substr_utf8_to_wstring(text);
+						std::cout << "--" << string_encoding_utility::wstring_to_gbk(wtext) << std::endl;
 #ifdef ENABLE_OLLAMA_TRANSLATE
                         try {
-                            std::cout << "**" << ollama_translate(text) << std::endl;
+                            
+                            std::cout << "**" << ollama_translate(string_encoding_utility::wstring_to_utf8(wtext)) << std::endl;
                         } catch (const std::exception& e) {
                             if( OLLAMA_ERROR_FLAG ){
                                 std::cerr << "Translation error: " << e.what() << std::endl;
