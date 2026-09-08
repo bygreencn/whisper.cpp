@@ -15,9 +15,127 @@
 #include "pa_win_wasapi.h"
 #include "portaudiocpp/PortAudioCpp.hxx"
 
-#ifdef WIN32
-#include <windows.h>
-#endif
+
+namespace string_encoding_utility {
+
+    namespace convert {
+        inline std::wstring mb_to_wide(const std::string& str, UINT code_page) {
+            if (str.empty()) return std::wstring();
+
+            int len = MultiByteToWideChar(code_page, 0, str.c_str(), -1, nullptr, 0);
+            if (len <= 0) throw std::runtime_error("MultiByteToWideChar failed");
+
+            std::wstring wstr(len - 1, L'\0');
+            MultiByteToWideChar(code_page, 0, str.c_str(), -1, (LPWSTR)wstr.data(), len);
+            return wstr;
+        }
+
+
+        inline std::string wide_to_mb(const std::wstring& wstr, UINT code_page, const char* default_char = nullptr) {
+            if (wstr.empty()) return std::string();
+
+            const char* actual_default = (code_page == CP_UTF8) ? nullptr : default_char;
+
+            int len = WideCharToMultiByte(code_page, 0, wstr.c_str(), -1, nullptr, 0, actual_default, nullptr);
+            if (len <= 0) throw std::runtime_error("WideCharToMultiByte failed");
+
+            std::string str(len - 1, '\0');
+            WideCharToMultiByte(code_page, 0, wstr.c_str(), -1, (LPSTR)str.data(), len, actual_default, nullptr);
+            return str;
+        }
+    } // namespace detail
+
+    namespace filter{
+        inline std::string remove_repeated_char(const std::string& str, size_t threshold = 3, size_t keep = 2) {
+            if (str.empty() || threshold < 2) return str;
+
+            std::string pattern = "(.)\\1{" + std::to_string(threshold - 1) + ",}";
+            std::regex re(pattern);
+
+            std::string replacement;
+            replacement.reserve(keep * 2);
+            for (size_t i = 0; i < keep; ++i) replacement += "$1";
+
+            return std::regex_replace(str, re, replacement);
+        }
+
+        inline std::wstring remove_repeated_char(const std::wstring& wstr, size_t threshold = 3, size_t keep = 2) {
+            if (wstr.empty() || threshold < 2) return wstr;
+
+            std::wstring pattern = L"(.)\\1{" + std::to_wstring(threshold - 1) + L",}";
+            std::wregex re(pattern);
+
+            std::wstring replacement;
+            replacement.reserve(keep * 2);
+            for (size_t i = 0; i < keep; ++i) replacement += L"$1";
+
+            return std::regex_replace(wstr, re, replacement);
+        }
+
+        inline std::string remove_repeated_substr(const std::string& str, size_t threshold = 3, size_t keep = 2) {
+            if (str.empty() || threshold < 2) return str;
+
+            std::string pattern = "(.{2,}?)\\1{" + std::to_string(threshold - 1) + ",}";
+            std::regex re(pattern);
+
+            std::string replacement;
+            replacement.reserve(keep * 2);
+            for (size_t i = 0; i < keep; ++i) replacement += "$1";
+
+            return std::regex_replace(str, re, replacement);
+        }
+
+        inline std::wstring remove_repeated_substr(const std::wstring& wstr, size_t threshold = 3, size_t keep = 2) {
+            if (wstr.empty() || threshold < 2) return wstr;
+
+            std::wstring pattern = L"(.{2,}?)\\1{" + std::to_wstring(threshold - 1) + L",}";
+            std::wregex re(pattern);
+
+            std::wstring replacement;
+            replacement.reserve(keep * 2);
+            for (size_t i = 0; i < keep; ++i) replacement += L"$1";
+
+            return std::regex_replace(wstr, re, replacement);
+        }
+	} //namespace filter
+
+
+
+    // 1. utf8 to wstring
+    std::wstring utf8_to_wstring(const std::string& utf8_str) {
+        return convert::mb_to_wide(utf8_str, CP_UTF8);
+    }
+
+    // 2. gbk to wstring
+    std::wstring gbk_to_wstring(const std::string& gbk_str) {
+        return convert::mb_to_wide(gbk_str, CP_GBK);
+    }
+
+    // 3. wstring to utf8
+    std::string wstring_to_utf8(const std::wstring& wstr) {
+        return convert::wide_to_mb(wstr, CP_UTF8);
+    }
+
+    // 4. wstring to gbk
+    std::string wstring_to_gbk(const std::wstring& wstr) {
+        return convert::wide_to_mb(wstr, CP_GBK, "?");
+    }
+
+    // 5. utf8 to gbk
+    std::string utf8_to_gbk(const std::string& utf8_str) {
+        return convert::wide_to_mb(convert::mb_to_wide(utf8_str, CP_UTF8), CP_GBK, "?");
+    }
+
+    // 6. gbk to utf8
+    std::string gbk_to_utf8(const std::string& gbk_str) {
+        return convert::wide_to_mb(convert::mb_to_wide(gbk_str, CP_GBK), CP_UTF8);
+    }
+
+	std::wstring remove_repeated_substr_utf8_to_wstring(const std::string& str, size_t threshold /*= 3*/, size_t keep /*= 2*/) {
+		std::wstring wstr = utf8_to_wstring(str);
+        return filter::remove_repeated_substr(wstr, threshold, keep);
+	}
+} // namespace Encoding
 
 
 audio_async::audio_async() 
@@ -59,22 +177,6 @@ audio_async::~audio_async() {
 }
 
 
-// Convert a UTF-8 string to UTF-16 (wchar_t)
-std::wstring UTF8StringToWString(const std::string& utf8Str) {
-    int sizeNeeded = MultiByteToWideChar(CP_UTF8, 0, utf8Str.c_str(), -1, nullptr, 0);
-    std::wstring utf16Str(sizeNeeded, 0);
-    MultiByteToWideChar(CP_UTF8, 0, utf8Str.c_str(), -1, &utf16Str[0], sizeNeeded);
-    return utf16Str;
-}
-
-// Convert a UTF-16 (wchar_t) string to UTF-8
-std::string utf16ToUtf8(const std::wstring& utf16Str) {
-    int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, utf16Str.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    std::string utf8Str(sizeNeeded, 0);
-    WideCharToMultiByte(CP_UTF8, 0, utf16Str.c_str(), -1, &utf8Str[0], sizeNeeded, nullptr, nullptr);
-    return utf8Str;
-}
-
 void audio_async::print_device_info()
 {
     std::cout << std::string(80, '*') << std::endl;
@@ -97,7 +199,7 @@ void audio_async::print_device_info()
             strDetails.c_str());
 
 #ifdef WIN32
-        std::wcout << UTF8StringToWString(device_info) << std::endl;
+        std::wcout << string_encoding_utility::utf8_to_wstring(device_info) << std::endl;
 #else
         std::cout << device_info << std::endl;
 #endif
@@ -131,7 +233,7 @@ void audio_async::print_working_microphones()
                 strDetails.c_str());
 
 #ifdef WIN32
-            std::wcout << UTF8StringToWString(device_info) << std::endl;
+            std::wcout << string_encoding_utility::utf8_to_wstring(device_info) << std::endl;
 #else
             std::cout << device_info << std::endl;
 #endif
@@ -173,7 +275,7 @@ int audio_async::print_loopback_devices()
                     strDetails.c_str());
 
 #ifdef WIN32
-                std::wcout << UTF8StringToWString(device_info) << std::endl;
+                std::wcout << string_encoding_utility::utf8_to_wstring(device_info) << std::endl;
 #else
                 std::cout << device_info << std::endl;
 #endif
@@ -188,7 +290,7 @@ int audio_async::print_loopback_devices()
     {
         loopback_device_index = -1;
         std::cout << "Please select the device index for audio input:" << std::endl;
-        int result = std::scanf("%d", &loopback_device_index);
+        int result = scanf_s("%d", &loopback_device_index);
 
         if (result == 1) {
             std::printf("You entered: loopback_device_index = %d\n", loopback_device_index);
@@ -226,7 +328,7 @@ bool audio_async::init(int iInputDevice, uint8_t save_audio, bool enable_rnnoise
 
 
 #ifdef WIN32
-        std::wcout << L"Opening recording input stream on " << UTF8StringToWString(m_psys->deviceByIndex(iInputDevice).name()) << std::endl;
+        std::wcout << L"Opening recording input stream on " << string_encoding_utility::utf8_to_wstring(m_psys->deviceByIndex(iInputDevice).name()) << std::endl;
 #else
         std::cout << "Opening recording input stream on " << m_psys->deviceByIndex(iInputDevice).name() << std::endl;
 #endif // WIN32

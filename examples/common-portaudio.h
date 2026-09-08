@@ -1,12 +1,14 @@
 #pragma once
-
+#include <windows.h>
+#include <regex>
+#include <stdexcept>
+#include <iostream>
+#include <string>
 #include <portaudiocpp/PortAudioCpp.hxx>
 #include <samplerate.h>
 #include <sndfile.hh>
 #include <rnnoise.h>
 #include "onnxruntime_cxx_api.h"
-#include <iostream>
-#include <string>
 
 
 #define SAVE_AUDIO_RAW          (0x08)
@@ -946,3 +948,28 @@ private:
     AudioBuffer<float> * m_pAudioBuffer;
     portaudio::System *m_psys;
 };
+
+namespace string_encoding_utility {
+
+    constexpr UINT CP_GBK = 936;
+
+    // 1. utf8 to wstring
+    std::wstring utf8_to_wstring(const std::string& utf8_str);
+
+    // 2. gbk to wstring
+    std::wstring gbk_to_wstring(const std::string& gbk_str);
+
+    // 3. wstring to utf8
+    std::string wstring_to_utf8(const std::wstring& wstr);
+
+    // 4. wstring to gbk
+    std::string wstring_to_gbk(const std::wstring& wstr);
+
+    // 5. utf8 to gbk
+    std::string utf8_to_gbk(const std::string& utf8_str);
+
+    // 6. gbk to utf8
+    std::string gbk_to_utf8(const std::string& gbk_str);
+
+    std::wstring remove_repeated_substr_utf8_to_wstring(const std::string& str, size_t threshold = 3, size_t keep = 2);
+}; // namespace string_encoding_utility

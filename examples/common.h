@@ -17,7 +17,7 @@
 
 struct gpt_params {
     int32_t seed         = -1;   // RNG seed
-    int32_t n_threads    = std::min(4, (int32_t) std::thread::hardware_concurrency());
+    int32_t n_threads    = (std::min)(4, (int32_t) std::thread::hardware_concurrency());
     int32_t n_predict    = 200;  // new tokens to predict
     int32_t n_parallel   = 1;    // number of parallel streams
     int32_t n_batch      = 32;   // batch size for prompt processing
@@ -71,10 +71,6 @@ struct gpt_vocab {
 
 // poor-man's JSON parsing
 std::map<std::string, int32_t> json_parse(const std::string & fname);
-
-std::string convert_to_utf8(const std::wstring & input);
-
-std::wstring convert_to_wstring(const std::string & input);
 
 void gpt_split_words(std::string str, std::vector<std::string>& words);
 
